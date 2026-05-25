@@ -46,7 +46,11 @@ class SignalManager
         return match ($mode) {
             'firehose' => $this->firehoseConsumer,
             'jetstream' => $this->jetstreamConsumer,
-            default => throw new InvalidArgumentException("Invalid signal mode: {$mode}. Must be 'jetstream' or 'firehose'."),
+            'tap' => throw new InvalidArgumentException(
+                'Tap mode uses webhook delivery — there is no persistent consumer to start. '
+                .'Ensure your Tap service is configured to POST events to your webhook endpoint.'
+            ),
+            default => throw new InvalidArgumentException("Invalid signal mode: {$mode}. Must be 'jetstream', 'firehose', or 'tap'."),
         };
     }
 }

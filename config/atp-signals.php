@@ -42,6 +42,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Tap Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Tap is a Go binary service from the AT Protocol team that provides
+    | filtered, verified webhook delivery of repo events with automatic
+    | backfilling. When enabled, Tap POSTs JSON events to your app's
+    | webhook endpoint instead of requiring a persistent WebSocket.
+    |
+    */
+    'tap' => [
+        'enabled' => env('TAP_ENABLED', false),
+        'database_path' => env('TAP_DATABASE_PATH', base_path('tap.db')),
+        'base_url' => env('TAP_URL', 'http://localhost:7374'),
+        'admin_password' => env('TAP_ADMIN_PASSWORD'),
+        'webhook_path' => env('TAP_WEBHOOK_PATH', '/_atp/tap/webhook'),
+        'webhook_middleware' => ['api'],
+        'queue_events' => env('TAP_QUEUE_EVENTS', true),
+        'queue_connection' => env('TAP_QUEUE_CONNECTION'),
+        'queue_name' => env('TAP_QUEUE', 'tap'),
+        'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
+        'restart_command' => env('TAP_RESTART_COMMAND'),
+        'batcher' => [
+            'ws_url' => env('TAP_WS_URL', 'ws://localhost:2480/channel'),
+            'batch_size' => env('TAP_BATCH_SIZE', 500),
+            'batch_timeout' => env('TAP_BATCH_TIMEOUT', 5000),
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Cursor Storage Driver
     |--------------------------------------------------------------------------
     |
