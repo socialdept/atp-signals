@@ -32,6 +32,11 @@ SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
 # Firehose Configuration
 SIGNAL_FIREHOSE_HOST=bsky.network
 
+# Tap Configuration (optional, webhook-based delivery)
+TAP_ENABLED=false
+TAP_URL=http://localhost:7374
+TAP_ADMIN_PASSWORD=
+
 # Cursor Storage (database, redis, or file)
 SIGNAL_CURSOR_STORAGE=database
 
@@ -122,6 +127,54 @@ SIGNAL_FIREHOSE_HOST=bsky.network
 ```env
 SIGNAL_FIREHOSE_HOST=my-pds.example.com
 ```
+
+## Tap Configuration
+
+Tap is an optional Go binary service that delivers events via HTTP webhooks instead of WebSocket connections.
+
+### Enable Tap
+
+```php
+'tap' => [
+    'enabled' => env('TAP_ENABLED', false),
+    'base_url' => env('TAP_URL', 'http://localhost:7374'),
+    'admin_password' => env('TAP_ADMIN_PASSWORD'),
+    'webhook_path' => env('TAP_WEBHOOK_PATH', '/_atp/tap/webhook'),
+    'webhook_middleware' => ['api'],
+    'queue_events' => env('TAP_QUEUE_EVENTS', true),
+    'queue_connection' => env('TAP_QUEUE_CONNECTION'),
+    'queue_name' => env('TAP_QUEUE', 'tap'),
+    'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
+    'restart_command' => env('TAP_RESTART_COMMAND'),
+],
+```
+
+**Environment Variables:**
+```env
+TAP_ENABLED=true
+TAP_URL=http://localhost:7374
+TAP_ADMIN_PASSWORD=your-secret-password
+TAP_WEBHOOK_PATH=/_atp/tap/webhook
+TAP_QUEUE_EVENTS=true
+TAP_QUEUE_CONNECTION=redis
+TAP_QUEUE=tap
+TAP_ENV_PATH=/path/to/storage/tap/env
+TAP_RESTART_COMMAND="supervisorctl restart tap"
+```
+
+**Options:**
+- `enabled`: Register the webhook route (default: `false`)
+- `base_url`: Tap service API URL for management commands
+- `admin_password`: Shared password for API and webhook authentication
+- `webhook_path`: URL path where Tap sends events
+- `webhook_middleware`: Middleware for the webhook route
+- `queue_events`: Queue incoming events vs process synchronously (default: `true`)
+- `queue_connection`: Queue connection for Tap jobs (null = default)
+- `queue_name`: Queue name for Tap jobs (default: `tap`)
+- `env_path`: File path where `signal:tap:restart` writes the env file
+- `restart_command`: Shell command to restart Tap after writing the env file
+
+[Learn more about Tap →](tap.md)
 
 ## Cursor Storage
 
@@ -405,6 +458,29 @@ return [
 
     'firehose' => [
         'host' => env('SIGNAL_FIREHOSE_HOST', 'bsky.network'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tap Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Tap is a Go binary service that delivers events via HTTP webhooks.
+    | Enable it to receive events without a long-running PHP process.
+    |
+    */
+
+    'tap' => [
+        'enabled' => env('TAP_ENABLED', false),
+        'base_url' => env('TAP_URL', 'http://localhost:7374'),
+        'admin_password' => env('TAP_ADMIN_PASSWORD'),
+        'webhook_path' => env('TAP_WEBHOOK_PATH', '/_atp/tap/webhook'),
+        'webhook_middleware' => ['api'],
+        'queue_events' => env('TAP_QUEUE_EVENTS', true),
+        'queue_connection' => env('TAP_QUEUE_CONNECTION'),
+        'queue_name' => env('TAP_QUEUE', 'tap'),
+        'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
+        'restart_command' => env('TAP_RESTART_COMMAND'),
     ],
 
     /*

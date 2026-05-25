@@ -1,16 +1,18 @@
-# Jetstream vs Firehose
+# Consumption Modes
 
-Signal supports two modes for consuming AT Protocol events. Understanding the differences is crucial for building efficient, scalable applications.
+Signal supports three modes for consuming AT Protocol events. Understanding the differences is crucial for building efficient, scalable applications.
 
 ## Quick Comparison
 
-| Feature          | Jetstream         | Firehose               |
-|------------------|-------------------|------------------------|
-| **Event Format** | Simplified JSON   | Raw CBOR/CAR           |
-| **Filtering**    | Server-side       | Client-side            |
-| **Bandwidth**    | Lower             | Higher                 |
-| **Processing**   | Lighter           | Heavier                |
-| **Best For**     | Most applications | Comprehensive indexing |
+| Feature              | Jetstream         | Firehose               | Tap                          |
+|----------------------|-------------------|------------------------|------------------------------|
+| **Event Format**     | Simplified JSON   | Raw CBOR/CAR           | JSON (via webhook)           |
+| **Delivery**         | WebSocket         | WebSocket              | HTTP webhooks                |
+| **Filtering**        | Server-side       | Client-side            | Server-side (collection)     |
+| **PHP Process**      | Long-running      | Long-running           | None (handles HTTP requests) |
+| **Backfilling**      | No                | No                     | Automatic                    |
+| **External Service** | No                | No                     | Yes (Go binary)              |
+| **Best For**         | Most applications | Comprehensive indexing | Production webhook delivery  |
 
 ## Jetstream Mode
 
@@ -241,6 +243,78 @@ The WebSocket URL is constructed as:
 wss://{host}/xrpc/com.atproto.sync.subscribeRepos
 ```
 
+## Tap Mode
+
+Tap is a **Go binary service** that delivers AT Protocol events via HTTP webhooks instead of WebSocket connections. It runs as an external service managed by Supervisor or systemd.
+
+### When to Use Tap
+
+Choose Tap if you're:
+
+- Running in production and want webhook-based delivery
+- Tracking specific repositories (users) and need automatic backfilling
+- Avoiding long-running PHP processes
+- Want a process manager (Supervisor) to handle reconnection
+
+### Configuration
+
+Enable Tap in your `.env`:
+
+```env
+TAP_ENABLED=true
+TAP_URL=http://localhost:7374
+TAP_ADMIN_PASSWORD=your-secret-password
+```
+
+### Advantages
+
+**1. No Long-Running PHP Process**
+
+Tap runs as a Go binary. Your Laravel app just handles webhook requests — no `signal:consume` needed.
+
+**2. Automatic Backfilling**
+
+When you add a new repo to track, Tap automatically backfills historical events. Your Signal can detect backfilled events:
+
+```php
+if ($event->backfill) {
+    // Historical event — skip notifications
+}
+```
+
+**3. Process Manager Integration**
+
+Tap integrates with Supervisor/systemd. The `signal:tap:restart` command writes env files and can trigger restarts automatically:
+
+```bash
+php artisan signal:tap:restart
+```
+
+**4. Collection Filter Management**
+
+The restart command automatically resolves collection filters from your registered Signals:
+
+```bash
+php artisan signal:tap:restart --write-only
+# Writes: TAP_COLLECTION_FILTERS='app.bsky.feed.post,site.standard.publication,...'
+```
+
+### Trade-offs
+
+**1. External Service Required**
+
+Tap requires installing and running a Go binary alongside your application.
+
+**2. No Raw CBOR/CAR Access**
+
+Like Jetstream, Tap delivers simplified JSON events. Use Firehose if you need raw data.
+
+**3. HTTP Overhead**
+
+Each event requires an HTTP round-trip, which adds latency compared to WebSocket streaming.
+
+[Learn more about Tap →](tap.md)
+
 ## Choosing the Right Mode
 
 ### Decision Tree
@@ -250,9 +324,13 @@ Do you need raw CBOR/CAR access?
 ├─ Yes → Use Firehose
 └─ No
     │
-    Do you want server-side filtering?
-    ├─ Yes → Use Jetstream (recommended)
-    └─ No → Use Firehose
+    Do you want webhook delivery (no long-running PHP)?
+    ├─ Yes → Use Tap
+    └─ No
+        │
+        Do you want server-side filtering?
+        ├─ Yes → Use Jetstream (recommended)
+        └─ No → Use Firehose
 ```
 
 ### Use Case Examples
@@ -288,6 +366,29 @@ public function collections(): ?array
 public function collections(): ?array
 {
     return null; // All collections
+}
+```
+
+**AppView Sync (Tap)**
+
+```php
+// Sync custom collections with automatic backfilling
+public function collections(): ?array
+{
+    return [
+        'site.standard.publication',
+        'site.standard.document',
+    ];
+}
+
+public function handle(SignalEvent $event): void
+{
+    if ($event->backfill) {
+        $this->syncQuietly($event);
+        return;
+    }
+
+    $this->syncAndNotify($event);
 }
 ```
 
@@ -442,24 +543,25 @@ SIGNAL_MODE=firehose php artisan signal:consume
 
 ### Will my Signals break if I switch modes?
 
-Signals work in both modes without changes. The main difference is:
+Signals work in all modes without changes. The main difference is:
 - Jetstream provides server-side filtering (more efficient)
 - Firehose provides raw CBOR/CAR data access (more comprehensive)
+- Tap provides webhook delivery with automatic backfilling
+
+Tap adds one extra property: `$event->backfill` (boolean) to distinguish live events from backfilled ones. This property is `null` for Jetstream/Firehose events.
 
 ### How do I know which mode I'm using?
 
 Check at runtime:
 
 ```php
-$mode = config('signal.mode'); // 'jetstream' or 'firehose'
+$mode = config('atp-signals.mode'); // 'jetstream' or 'firehose'
 ```
 
-Or via Facade:
+For Tap, check if Tap is enabled:
 
 ```php
-use SocialDept\AtpSignals\Facades\Signal;
-
-$mode = Signal::getMode();
+$tapEnabled = config('atp-signals.tap.enabled'); // true or false
 ```
 
 ### Can I switch modes while consuming?

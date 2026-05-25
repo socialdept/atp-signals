@@ -24,7 +24,7 @@ Think of it as Laravel's event listeners, but for the decentralized social web.
 
 - **Laravel-style code** - Familiar patterns you already know
 - **Real-time processing** - React to events as they happen
-- **Dual-mode support** - Choose Jetstream (efficient JSON) or Firehose (comprehensive CBOR)
+- **Three consumption modes** - Jetstream (efficient JSON), Firehose (comprehensive CBOR), or Tap (webhook delivery)
 - **AppView ready** - Full support for custom collections and protocols
 - **Production features** - Queue integration, cursor management, auto-reconnection
 - **Easy filtering** - Target specific collections, operations, and users with wildcards
@@ -119,6 +119,9 @@ Your Signal will now handle every matching event from the network. [Read the qui
 - [Filtering Events](docs/filtering.md) - Target specific collections and operations
 - [Queue Integration](docs/queues.md) - Process events asynchronously
 
+**Tap Mode**
+- [Tap Mode](docs/tap.md) - Webhook-based event delivery with automatic backfilling
+
 **Advanced**
 - [Configuration](docs/configuration.md) - All config options explained
 - [Testing](docs/testing.md) - Test your Signals
@@ -159,14 +162,15 @@ public function collections(): ?array
 
 ## Key Features Explained
 
-### Jetstream vs Firehose
+### Consumption Modes
 
-Signal supports two modes for consuming AT Protocol events:
+Signal supports three modes for consuming AT Protocol events:
 
 - **Jetstream** (default) - Simplified JSON events with server-side filtering
 - **Firehose** - Raw CBOR/CAR format with client-side filtering
+- **Tap** - Webhook-based delivery via an external Go service with automatic backfilling
 
-[Learn more about modes →](docs/modes.md)
+[Learn more about modes →](docs/modes.md) | [Learn more about Tap →](docs/tap.md)
 
 ### Wildcard Filtering
 
@@ -210,11 +214,18 @@ php artisan make:signal YourSignal
 # List all registered Signals
 php artisan signal:list
 
-# Start consuming events
+# Start consuming events (Jetstream/Firehose)
 php artisan signal:consume
 
 # Test a Signal with sample data
 php artisan signal:test YourSignal
+
+# Tap management
+php artisan signal:tap:restart          # Write env file and restart Tap
+php artisan signal:tap:restart --write-only  # Write env file only
+php artisan signal:tap:add {did}        # Add a repo to Tap tracking
+php artisan signal:tap:remove {did}     # Remove a repo from Tap tracking
+php artisan signal:tap:status           # Check Tap service health
 ```
 
 ## Requirements

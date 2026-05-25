@@ -94,7 +94,7 @@ SIGNAL_QUEUE=signal
 
 ## Choosing Your Mode
 
-Signal supports two modes for consuming events. Choose based on your use case:
+Signal supports three modes for consuming events. Choose based on your use case:
 
 ### Jetstream Mode (Recommended)
 
@@ -128,7 +128,26 @@ SIGNAL_FIREHOSE_HOST=bsky.network
 - Client-side filtering only (higher bandwidth)
 - More processing overhead
 
-[Learn more about choosing the right mode →](modes.md)
+### Tap Mode
+
+Best for production webhook delivery with automatic backfilling:
+
+```env
+TAP_ENABLED=true
+TAP_URL=http://localhost:7374
+TAP_ADMIN_PASSWORD=your-secret-password
+```
+
+**Advantages:**
+- No long-running PHP process
+- Automatic backfilling of historical events
+- Process manager integration (Supervisor/systemd)
+
+**Trade-offs:**
+- Requires an external Go binary
+- HTTP overhead per event
+
+[Learn more about choosing the right mode →](modes.md) | [Learn more about Tap →](tap.md)
 
 ## Verify Installation
 
