@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - `SocialDept\AtpSignals\Tap\TapEventNormalizer` — converts Tap's wire format to `SignalEvent`.
   - `SocialDept\AtpSignals\Tap\Models\TapRepo` and `TapRepoRecord` — read-only Eloquent models bound to the Tap SQLite database for repo/record introspection.
   - New artisan commands: `signal:tap:add`, `signal:tap:remove`, `signal:tap:status`, `signal:tap:restart`.
-  - `bin/tap-batcher/` — Bun proxy that consumes Tap's WebSocket channel and bulk-POSTs to `TapBulkWebhookController` to keep per-event HTTP overhead down during backfills.
+  - `bin/tap-batcher/` — Optional Bun HTTP proxy that sits between Tap and Laravel. Tap POSTs single events to the batcher; the batcher buffers and forwards batches to `TapBulkWebhookController` to keep per-event HTTP overhead down during backfills. Each Tap request stays open until its batch is delivered (2xx) or all retries fail (5xx) — Tap's `outbox_buffers` is the durable retry buffer, no in-memory events lost on restart. Configured via `atp-signals.tap.batcher.{enabled,host,port,path,batch_size,batch_timeout,insecure_tls}`.
 - **`SignalEvent::$backfill`** — new optional `?bool $backfill = null` constructor parameter. `null` for Jetstream/Firehose, `true`/`false` for Tap events based on the `live` flag. Serialized in `toArray()` only when set.
 - **`SignalServiceProvider`** auto-discovers signals in the configured directory in addition to those listed in config (was previously config-only).
 - `docs/tap.md` — Tap mode guide (configuration, commands, batcher, troubleshooting).

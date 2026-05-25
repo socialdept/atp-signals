@@ -94,26 +94,47 @@ class TapRestartCommand extends Command
 
         File::ensureDirectoryExists(dirname($envPath));
 
-        $webhookUrl = url(config('atp-signals.tap.webhook_path', '/_atp/tap/webhook'));
         $adminPassword = config('atp-signals.tap.admin_password', '');
+        $useBatcher = (bool) config('atp-signals.tap.batcher.enabled', false);
 
+        $directWebhookUrl = url(config('atp-signals.tap.webhook_path', '/_atp/tap/webhook'));
         $bulkWebhookUrl = url(config('atp-signals.tap.webhook_path', '/_atp/tap/webhook').'/bulk');
-        $batchSize = config('atp-signals.tap.batcher.batch_size', 500);
-        $batchTimeout = config('atp-signals.tap.batcher.batch_timeout', 5000);
-        $wsUrl = config('atp-signals.tap.batcher.ws_url', 'ws://localhost:2480/channel');
+
+        $batcherHost = config('atp-signals.tap.batcher.host', '127.0.0.1');
+        $batcherPort = (int) config('atp-signals.tap.batcher.port', 9999);
+        $batcherPath = config('atp-signals.tap.batcher.path', '/');
+        $batchSize = (int) config('atp-signals.tap.batcher.batch_size', 500);
+        $batchTimeout = (int) config('atp-signals.tap.batcher.batch_timeout', 5000);
+
+        // When the batcher is enabled, Tap POSTs to the batcher (which buffers
+        // and bulk-forwards to Laravel). Otherwise Tap POSTs directly to the
+        // Laravel webhook one event at a time.
+        $tapWebhookUrl = $useBatcher
+            ? "http://{$batcherHost}:{$batcherPort}{$batcherPath}"
+            : $directWebhookUrl;
 
         $lines = [
-            'TAP_WEBHOOK_URL='.escapeshellarg($webhookUrl),
+            'TAP_WEBHOOK_URL='.escapeshellarg($tapWebhookUrl),
             'TAP_ADMIN_PASSWORD='.escapeshellarg($adminPassword),
             'TAP_COLLECTION_FILTERS='.escapeshellarg(implode(',', $collections)),
-            '',
-            '# Batcher proxy settings',
-            'TAP_WS_URL='.escapeshellarg($wsUrl),
-            'WEBHOOK_BULK_URL='.escapeshellarg($bulkWebhookUrl),
-            'WEBHOOK_AUTH_PASSWORD='.escapeshellarg($adminPassword),
-            'BATCH_SIZE='.$batchSize,
-            'BATCH_TIMEOUT_MS='.$batchTimeout,
         ];
+
+        if ($useBatcher) {
+            $insecureTls = (bool) config('atp-signals.tap.batcher.insecure_tls', false);
+
+            $lines = array_merge($lines, [
+                '',
+                '# Batcher proxy settings',
+                'BATCHER_HOST='.escapeshellarg($batcherHost),
+                'BATCHER_PORT='.$batcherPort,
+                'BATCHER_PATH='.escapeshellarg($batcherPath),
+                'WEBHOOK_BULK_URL='.escapeshellarg($bulkWebhookUrl),
+                'WEBHOOK_AUTH_PASSWORD='.escapeshellarg($adminPassword),
+                'BATCH_SIZE='.$batchSize,
+                'BATCH_TIMEOUT_MS='.$batchTimeout,
+                'BATCHER_INSECURE_TLS='.($insecureTls ? 'true' : 'false'),
+            ]);
+        }
 
         File::put($envPath, implode("\n", $lines)."\n");
 

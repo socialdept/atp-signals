@@ -63,10 +63,20 @@ return [
         'queue_name' => env('TAP_QUEUE', 'tap'),
         'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
         'restart_command' => env('TAP_RESTART_COMMAND'),
+        // Optional batcher proxy. When enabled, Tap POSTs single events to
+        // the batcher (a small Bun HTTP server), which buffers and forwards
+        // batches to Laravel's TapBulkWebhookController. Useful when Tap's
+        // per-event HTTP overhead is a bottleneck (e.g. during backfills).
         'batcher' => [
-            'ws_url' => env('TAP_WS_URL', 'ws://localhost:2480/channel'),
-            'batch_size' => env('TAP_BATCH_SIZE', 500),
-            'batch_timeout' => env('TAP_BATCH_TIMEOUT', 5000),
+            'enabled' => env('TAP_BATCHER_ENABLED', false),
+            'host' => env('TAP_BATCHER_HOST', '127.0.0.1'),
+            'port' => (int) env('TAP_BATCHER_PORT', 9999),
+            'path' => env('TAP_BATCHER_PATH', '/'),
+            'batch_size' => (int) env('TAP_BATCH_SIZE', 500),
+            'batch_timeout' => (int) env('TAP_BATCH_TIMEOUT', 5000),
+            // Skip TLS verification on the batcher's outbound POST to the
+            // Laravel bulk endpoint. Local-dev only (e.g. Herd's *.test certs).
+            'insecure_tls' => env('TAP_BATCHER_INSECURE_TLS', false),
         ],
     ],
 
