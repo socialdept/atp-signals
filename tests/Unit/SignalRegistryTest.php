@@ -3,14 +3,14 @@
 namespace SocialDept\AtpSignals\Tests\Unit;
 
 use Orchestra\Testbench\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 use SocialDept\AtpSignals\Events\CommitEvent;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Services\SignalRegistry;
 
 class SignalRegistryTest extends TestCase
 {
-    /** @test */
-    public function it_matches_exact_collections()
+    #[Test]    public function it_matches_exact_collections()
     {
         $registry = new SignalRegistry();
 
@@ -35,8 +35,7 @@ class SignalRegistryTest extends TestCase
         $this->assertTrue($result);
     }
 
-    /** @test */
-    public function it_matches_wildcard_collections()
+    #[Test]    public function it_matches_wildcard_collections()
     {
         $registry = new SignalRegistry();
 
@@ -83,8 +82,7 @@ class SignalRegistryTest extends TestCase
         );
     }
 
-    /** @test */
-    public function it_matches_multiple_patterns()
+    #[Test]    public function it_matches_multiple_patterns()
     {
         $registry = new SignalRegistry();
 

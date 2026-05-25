@@ -4,6 +4,7 @@ namespace SocialDept\AtpSignals\Tests\Unit;
 
 use Mockery;
 use Orchestra\Testbench\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 use SocialDept\AtpSignals\Contracts\CursorStore;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Services\EventDispatcher;
@@ -19,8 +20,7 @@ class JetstreamConsumerTest extends TestCase
         parent::tearDown();
     }
 
-    /** @test */
-    public function it_builds_url_without_collection_filter_when_signal_wants_all_collections()
+    #[Test]    public function it_builds_url_without_collection_filter_when_signal_wants_all_collections()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -50,8 +50,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertEquals('wss://jetstream2.us-east.bsky.network/subscribe', $url);
     }
 
-    /** @test */
-    public function it_builds_url_with_collection_filter_when_signal_specifies_collections()
+    #[Test]    public function it_builds_url_with_collection_filter_when_signal_specifies_collections()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -79,8 +78,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringContainsString('wantedCollections=app.bsky.feed.post', $url);
     }
 
-    /** @test */
-    public function it_builds_url_with_third_party_collection()
+    #[Test]    public function it_builds_url_with_third_party_collection()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -108,8 +106,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringContainsString('wantedCollections=site.standard.document', $url);
     }
 
-    /** @test */
-    public function it_omits_collection_filter_when_any_signal_wants_all_collections()
+    #[Test]    public function it_omits_collection_filter_when_any_signal_wants_all_collections()
     {
         $specificSignal = new class () extends Signal {
             public function eventTypes(): array
@@ -156,8 +153,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringNotContainsString('wantedCollections', $url);
     }
 
-    /** @test */
-    public function it_combines_collections_from_multiple_signals()
+    #[Test]    public function it_combines_collections_from_multiple_signals()
     {
         $postSignal = new class () extends Signal {
             public function eventTypes(): array
@@ -204,8 +200,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringContainsString('wantedCollections=app.bsky.feed.like', $url);
     }
 
-    /** @test */
-    public function it_preserves_wildcard_asterisk_in_collection_filter()
+    #[Test]    public function it_preserves_wildcard_asterisk_in_collection_filter()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -235,8 +230,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringNotContainsString('%2A', $url);
     }
 
-    /** @test */
-    public function it_includes_cursor_in_url_when_provided()
+    #[Test]    public function it_includes_cursor_in_url_when_provided()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -265,8 +259,7 @@ class JetstreamConsumerTest extends TestCase
         $this->assertStringContainsString('wantedCollections=app.bsky.feed.post', $url);
     }
 
-    /** @test */
-    public function it_deduplicates_collections_from_multiple_signals()
+    #[Test]    public function it_deduplicates_collections_from_multiple_signals()
     {
         $signal1 = new class () extends Signal {
             public function eventTypes(): array
