@@ -56,6 +56,7 @@ class WebSocketConnection
 
                 $conn->on('close', function ($code = null, $reason = null) {
                     $this->connected = false;
+
                     try {
                         if ($this->onClose) {
                             ($this->onClose)($code, $reason);
