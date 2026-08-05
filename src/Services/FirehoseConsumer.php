@@ -4,10 +4,10 @@ namespace SocialDept\AtpSignals\Services;
 
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
-use SocialDept\AtpSignals\Contracts\CursorStore;
 use SocialDept\AtpCbor\Core\CAR;
 use SocialDept\AtpCbor\Core\CBOR;
 use SocialDept\AtpCbor\Core\CID;
+use SocialDept\AtpSignals\Contracts\CursorStore;
 use SocialDept\AtpSignals\Events\AccountEvent;
 use SocialDept\AtpSignals\Events\CommitEvent;
 use SocialDept\AtpSignals\Events\IdentityEvent;

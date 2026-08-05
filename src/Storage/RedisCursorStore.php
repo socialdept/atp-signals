@@ -10,10 +10,15 @@ class RedisCursorStore implements CursorStore
     protected string $connection;
     protected string $key;
 
-    public function __construct()
+    /**
+     * @param  string|null  $suffix  Appended to the configured key, so each consumer
+     *                               mode keeps an independent position.
+     */
+    public function __construct(?string $suffix = null)
     {
         $this->connection = config('atp-signals.cursor_config.redis.connection', 'default');
-        $this->key = config('atp-signals.cursor_config.redis.key', 'signal:cursor');
+        $this->key = config('atp-signals.cursor_config.redis.key', 'signal:cursor')
+            .($suffix ? ":{$suffix}" : '');
     }
 
     public function get(): ?int

@@ -3,12 +3,14 @@
 namespace SocialDept\AtpSignals\Services;
 
 use InvalidArgumentException;
+use SocialDept\AtpSignals\Obelisk\ObeliskConsumer;
 
 class SignalManager
 {
     public function __construct(
         protected FirehoseConsumer $firehoseConsumer,
         protected JetstreamConsumer $jetstreamConsumer,
+        protected ObeliskConsumer $obeliskConsumer,
     ) {
     }
 
@@ -39,14 +41,17 @@ class SignalManager
     /**
      * Resolve the appropriate consumer based on configuration.
      */
-    protected function resolveConsumer(): FirehoseConsumer|JetstreamConsumer
+    protected function resolveConsumer(): FirehoseConsumer|JetstreamConsumer|ObeliskConsumer
     {
         $mode = $this->getMode();
 
         return match ($mode) {
             'firehose' => $this->firehoseConsumer,
             'jetstream' => $this->jetstreamConsumer,
-            default => throw new InvalidArgumentException("Invalid signal mode: {$mode}. Must be 'jetstream' or 'firehose'."),
+            'obelisk' => $this->obeliskConsumer,
+            default => throw new InvalidArgumentException(
+                "Invalid signal mode: {$mode}. Must be 'jetstream', 'firehose', or 'obelisk'."
+            ),
         };
     }
 }

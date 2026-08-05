@@ -13,6 +13,8 @@ class SignalEvent implements EventContract
         public ?CommitEvent $commit = null,
         public ?IdentityEvent $identity = null,
         public ?AccountEvent $account = null,
+        public ?bool $backfill = null, // null for jetstream/firehose, true/false for obelisk
+        public ?string $cursor = null, // obelisk event id; null for jetstream/firehose
     ) {
     }
 
@@ -67,12 +69,14 @@ class SignalEvent implements EventContract
             commit: $commit,
             identity: $identity,
             account: $account,
+            backfill: $data['backfill'] ?? null,
+            cursor: isset($data['cursor']) ? (string) $data['cursor'] : null,
         );
     }
 
     public function toArray(): array
     {
-        return [
+        $array = [
             'did' => $this->did,
             'time_us' => $this->timeUs,
             'kind' => $this->kind,
@@ -80,5 +84,15 @@ class SignalEvent implements EventContract
             'identity' => $this->identity?->toArray(),
             'account' => $this->account?->toArray(),
         ];
+
+        if ($this->backfill !== null) {
+            $array['backfill'] = $this->backfill;
+        }
+
+        if ($this->cursor !== null) {
+            $array['cursor'] = $this->cursor;
+        }
+
+        return $array;
     }
 }

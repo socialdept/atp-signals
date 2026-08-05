@@ -1,16 +1,19 @@
-# Jetstream vs Firehose
+# Consumption Modes
 
-Signal supports two modes for consuming AT Protocol events. Understanding the differences is crucial for building efficient, scalable applications.
+Signal supports three modes for consuming AT Protocol events. Understanding the differences is crucial for building efficient, scalable applications.
 
 ## Quick Comparison
 
-| Feature          | Jetstream         | Firehose               |
-|------------------|-------------------|------------------------|
-| **Event Format** | Simplified JSON   | Raw CBOR/CAR           |
-| **Filtering**    | Server-side       | Client-side            |
-| **Bandwidth**    | Lower             | Higher                 |
-| **Processing**   | Lighter           | Heavier                |
-| **Best For**     | Most applications | Comprehensive indexing |
+| Feature              | Jetstream         | Firehose               | Obelisk                          |
+|----------------------|-------------------|------------------------|----------------------------------|
+| **Event Format**     | Simplified JSON   | Raw CBOR/CAR           | JSON (webhook or poll)           |
+| **Delivery**         | WebSocket         | WebSocket              | HTTP webhooks, or cursor polling |
+| **Filtering**        | Server-side       | Client-side            | Server-side (collection, action, record fields, audience) |
+| **PHP Process**      | Long-running      | Long-running           | None for push, one for pull      |
+| **Replay**           | No                | No                     | Yes — rewind a cursor            |
+| **Backfilling**      | No                | No                     | Yes (archive-side)               |
+| **External Service** | No                | No                     | Yes (Obelisk + Postgres)         |
+| **Best For**         | Most applications | Comprehensive indexing | Durable delivery you can replay  |
 
 ## Jetstream Mode
 
@@ -241,6 +244,75 @@ The WebSocket URL is constructed as:
 wss://{host}/xrpc/com.atproto.sync.subscribeRepos
 ```
 
+## Obelisk Mode
+
+Obelisk is a **self-hostable AT Protocol record archive** that syncs collections from the network and serves them over an authenticated XRPC API. Signal consumes its event log either way round: Obelisk POSTs batched, HMAC-signed deliveries to your app (push), or your app polls the log from a stored cursor (pull).
+
+### When to Use Obelisk
+
+Choose Obelisk if you're:
+
+- Running in production and want delivery that survives your app being down
+- Wanting to replay events after a bug, rather than losing them
+- Filtering on more than a collection name (record field matchers, audiences, link-based feeds)
+- Avoiding a long-running PHP process (push), or unable to receive webhooks (pull)
+
+### Configuration
+
+```env
+OBELISK_ENABLED=true
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=your-archive-bearer-token
+OBELISK_WEBHOOK_SECRET=from-createWebhook
+
+# Pull mode only
+SIGNAL_MODE=obelisk
+```
+
+### Advantages
+
+**1. The archive is the buffer**
+
+Events accumulate durably. A consumer down for a week resumes exactly where it stopped; the cursor never advanced.
+
+**2. Replay**
+
+Rewind a cursor and the same events come back in order:
+
+```bash
+php artisan signal:obelisk:rewind 0 --name=my-app --execute
+```
+
+**3. Batched delivery, never a flood**
+
+A full batch is delivered immediately, a partial batch at most once per `max_wait_ms`. Backfills arrive at a rate your app can absorb.
+
+**4. Backfill flag**
+
+Historical events arrive with `live: false`:
+
+```php
+if ($event->backfill) {
+    // Historical event — skip notifications
+}
+```
+
+### Trade-offs
+
+**1. External Service Required**
+
+Obelisk is a Bun process plus Postgres (and Tab for network sync) running alongside your application.
+
+**2. Commit events only**
+
+The archive's event log has no identity or account stream. Use Jetstream or Firehose if you need those.
+
+**3. Latency**
+
+Push adds an HTTP round-trip and up to `max_wait_ms` for a partial batch. Pull adds up to `poll_interval`.
+
+[Learn more about Obelisk →](obelisk.md)
+
 ## Choosing the Right Mode
 
 ### Decision Tree
@@ -250,9 +322,13 @@ Do you need raw CBOR/CAR access?
 ├─ Yes → Use Firehose
 └─ No
     │
-    Do you want server-side filtering?
-    ├─ Yes → Use Jetstream (recommended)
-    └─ No → Use Firehose
+    Do you need replay, durable buffering, or webhook delivery?
+    ├─ Yes → Use Obelisk
+    └─ No
+        │
+        Do you want server-side filtering?
+        ├─ Yes → Use Jetstream (recommended)
+        └─ No → Use Firehose
 ```
 
 ### Use Case Examples
@@ -288,6 +364,29 @@ public function collections(): ?array
 public function collections(): ?array
 {
     return null; // All collections
+}
+```
+
+**AppView Sync (Obelisk)**
+
+```php
+// Sync custom collections with automatic backfilling
+public function collections(): ?array
+{
+    return [
+        'site.standard.publication',
+        'site.standard.document',
+    ];
+}
+
+public function handle(SignalEvent $event): void
+{
+    if ($event->backfill) {
+        $this->syncQuietly($event);
+        return;
+    }
+
+    $this->syncAndNotify($event);
 }
 ```
 
@@ -442,24 +541,25 @@ SIGNAL_MODE=firehose php artisan signal:consume
 
 ### Will my Signals break if I switch modes?
 
-Signals work in both modes without changes. The main difference is:
+Signals work in all modes without changes. The main difference is:
 - Jetstream provides server-side filtering (more efficient)
 - Firehose provides raw CBOR/CAR data access (more comprehensive)
+- Obelisk provides replayable delivery, push or pull
+
+Obelisk adds two extra properties: `$event->backfill` (boolean) to distinguish live events from historical ones, and `$event->cursor` (string) carrying the archive event id. Both are `null` for Jetstream/Firehose events.
 
 ### How do I know which mode I'm using?
 
 Check at runtime:
 
 ```php
-$mode = config('signal.mode'); // 'jetstream' or 'firehose'
+$mode = config('atp-signals.mode'); // 'jetstream', 'firehose', or 'obelisk'
 ```
 
-Or via Facade:
+Push delivery is independent of the mode — check whether it is enabled:
 
 ```php
-use SocialDept\AtpSignals\Facades\Signal;
-
-$mode = Signal::getMode();
+$push = config('atp-signals.obelisk.enabled'); // true or false
 ```
 
 ### Can I switch modes while consuming?

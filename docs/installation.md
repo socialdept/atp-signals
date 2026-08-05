@@ -94,7 +94,7 @@ SIGNAL_QUEUE=signal
 
 ## Choosing Your Mode
 
-Signal supports two modes for consuming events. Choose based on your use case:
+Signal supports three modes for consuming events. Choose based on your use case:
 
 ### Jetstream Mode (Recommended)
 
@@ -128,7 +128,28 @@ SIGNAL_FIREHOSE_HOST=bsky.network
 - Client-side filtering only (higher bandwidth)
 - More processing overhead
 
-[Learn more about choosing the right mode →](modes.md)
+### Obelisk Mode
+
+Best for delivery that survives downtime and can be replayed:
+
+```env
+OBELISK_ENABLED=true
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=your-archive-bearer-token
+OBELISK_WEBHOOK_SECRET=from-createWebhook
+```
+
+**Advantages:**
+- Durable event log — a consumer that was down resumes where it stopped
+- Replay by rewinding a cursor
+- Batched delivery that cannot flood your app
+- Push (no long-running PHP process) or pull (no inbound URL)
+
+**Trade-offs:**
+- Requires running Obelisk and Postgres alongside your app
+- Commit events only (no identity or account stream)
+
+[Learn more about choosing the right mode →](modes.md) | [Learn more about Obelisk →](obelisk.md)
 
 ## Verify Installation
 

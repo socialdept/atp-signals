@@ -10,17 +10,23 @@ class DatabaseCursorStore implements CursorStore
 {
     protected string $table;
     protected ?string $connection;
+    protected string $key;
 
-    public function __construct()
+    /**
+     * @param  string|null  $key  Cursor row key, so each consumer mode keeps an
+     *                            independent position. Defaults to 'jetstream'.
+     */
+    public function __construct(?string $key = null)
     {
         $this->table = config('atp-signals.cursor_config.database.table', 'signal_cursors');
         $this->connection = config('atp-signals.cursor_config.database.connection');
+        $this->key = $key ?? 'jetstream';
     }
 
     public function get(): ?int
     {
         $cursor = $this->query()
-            ->where('key', 'jetstream')
+            ->where('key', $this->key)
             ->value('cursor');
 
         return $cursor ? (int) $cursor : null;
@@ -30,7 +36,7 @@ class DatabaseCursorStore implements CursorStore
     {
         $this->query()
             ->updateOrInsert(
-                ['key' => 'jetstream'],
+                ['key' => $this->key],
                 [
                     'cursor' => $cursor,
                     'updated_at' => now(),
@@ -41,7 +47,7 @@ class DatabaseCursorStore implements CursorStore
     public function clear(): void
     {
         $this->query()
-            ->where('key', 'jetstream')
+            ->where('key', $this->key)
             ->delete();
     }
 

@@ -6,11 +6,13 @@ return [
     | Signal Mode
     |--------------------------------------------------------------------------
     |
-    | The mode determines which AT Protocol stream to consume:
+    | The mode determines where consumed events come from:
     | - 'jetstream': JSON events with server-side collection filtering
     |                (supports all collections including third-party lexicons)
     | - 'firehose':  Raw CBOR events with client-side filtering
     |                (comprehensive access to all network events)
+    | - 'obelisk':   Pull an Obelisk archive's event log. Push delivery
+    |                (webhooks) works independently of this setting.
     |
     */
     'mode' => env('SIGNAL_MODE', 'jetstream'),
@@ -38,6 +40,57 @@ return [
     */
     'firehose' => [
         'host' => env('SIGNAL_FIREHOSE_HOST', 'bsky.network'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Obelisk Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Obelisk is a self-hostable AT Protocol record archive that syncs
+    | collections from the network and serves them over an authenticated XRPC
+    | API. Signal consumes its event log two ways, and they can run together:
+    |
+    | - Push: Obelisk POSTs batched, HMAC-signed deliveries to the webhook
+    |         route below. It owns the cursor and only advances it on a 2xx,
+    |         so a failed delivery is redelivered rather than lost.
+    | - Pull: `signal:consume` (mode 'obelisk') polls getEvents from a stored
+    |         cursor. No inbound URL needed.
+    |
+    */
+    'obelisk' => [
+        'enabled' => env('OBELISK_ENABLED', false),
+
+        // Archive base URL and the bearer token minted by its create-token script.
+        'base_url' => env('OBELISK_URL', 'http://localhost:6060'),
+        'token' => env('OBELISK_TOKEN'),
+        'timeout' => (int) env('OBELISK_TIMEOUT', 30),
+
+        // Push delivery. The secret is what createWebhook returned, once.
+        'webhook_path' => env('OBELISK_WEBHOOK_PATH', '/_atp/obelisk/webhook'),
+        'webhook_secret' => env('OBELISK_WEBHOOK_SECRET'),
+        'webhook_middleware' => ['api'],
+
+        // Signature verification. Leave on: with it off, anything that can reach
+        // the route can inject events.
+        'verify_signature' => env('OBELISK_VERIFY_SIGNATURE', true),
+
+        // Queue the batch instead of handling it in the request. The batch is the
+        // unit of work, which keeps events in cursor order.
+        'queue_events' => env('OBELISK_QUEUE_EVENTS', true),
+        'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
+        'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
+
+        // Pull consumer.
+        'pull' => [
+            // Events per getEvents page.
+            'limit' => (int) env('OBELISK_PULL_LIMIT', 200),
+            // Seconds to wait once the backlog is drained. A full page never waits.
+            'poll_interval' => (int) env('OBELISK_PULL_POLL_INTERVAL', 5),
+            // Optional single-collection filter. Null polls every archived
+            // collection and lets each Signal's collections() do the filtering.
+            'collection' => env('OBELISK_PULL_COLLECTION'),
+        ],
     ],
 
     /*

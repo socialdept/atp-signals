@@ -9,6 +9,8 @@
         "illuminate/support": "^11.0|^12.0|^13.0",
         "illuminate/console": "^11.0|^12.0|^13.0",
         "illuminate/database": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/routing": "^11.0|^12.0|^13.0",
         "ratchet/pawl": "^0.4",
         "react/event-loop": "^1.5"
     },
@@ -26,6 +28,11 @@
         "psr-4": {
             "SocialDept\\AtpSignals\\Tests\\": "tests/"
         }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "format": "php-cs-fixer fix",
+        "format:check": "php-cs-fixer fix --dry-run --diff"
     },
     "extra": {
         "laravel": {

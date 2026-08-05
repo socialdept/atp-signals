@@ -24,7 +24,7 @@ Think of it as Laravel's event listeners, but for the decentralized social web.
 
 - **Laravel-style code** - Familiar patterns you already know
 - **Real-time processing** - React to events as they happen
-- **Dual-mode support** - Choose Jetstream (efficient JSON) or Firehose (comprehensive CBOR)
+- **Three consumption modes** - Jetstream (efficient JSON), Firehose (comprehensive CBOR), or Obelisk (replayable archive delivery)
 - **AppView ready** - Full support for custom collections and protocols
 - **Production features** - Queue integration, cursor management, auto-reconnection
 - **Easy filtering** - Target specific collections, operations, and users with wildcards
@@ -119,6 +119,9 @@ Your Signal will now handle every matching event from the network. [Read the qui
 - [Filtering Events](docs/filtering.md) - Target specific collections and operations
 - [Queue Integration](docs/queues.md) - Process events asynchronously
 
+**Obelisk Mode**
+- [Obelisk Mode](docs/obelisk.md) - Archive-backed delivery, push or pull, with replay
+
 **Advanced**
 - [Configuration](docs/configuration.md) - All config options explained
 - [Testing](docs/testing.md) - Test your Signals
@@ -159,14 +162,15 @@ public function collections(): ?array
 
 ## Key Features Explained
 
-### Jetstream vs Firehose
+### Consumption Modes
 
-Signal supports two modes for consuming AT Protocol events:
+Signal supports three modes for consuming AT Protocol events:
 
 - **Jetstream** (default) - Simplified JSON events with server-side filtering
 - **Firehose** - Raw CBOR/CAR format with client-side filtering
+- **Obelisk** - Replayable delivery from a self-hosted record archive, by webhook or by polling
 
-[Learn more about modes →](docs/modes.md)
+[Learn more about modes →](docs/modes.md) | [Learn more about Obelisk →](docs/obelisk.md)
 
 ### Wildcard Filtering
 
@@ -210,11 +214,17 @@ php artisan make:signal YourSignal
 # List all registered Signals
 php artisan signal:list
 
-# Start consuming events
+# Start consuming events (Jetstream/Firehose/Obelisk)
 php artisan signal:consume
 
 # Test a Signal with sample data
 php artisan signal:test YourSignal
+
+# Obelisk management
+php artisan signal:obelisk:subscribe --execute   # Create/update this app's webhook subscription
+php artisan signal:obelisk:status                # Archive health, subscriptions, cursors
+php artisan signal:obelisk:rewind {cursor} --name=my-app --execute  # Replay from a cursor
+php artisan signal:obelisk:pull                  # Drain new events once and exit
 ```
 
 ## Requirements

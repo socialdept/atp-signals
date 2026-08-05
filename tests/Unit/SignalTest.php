@@ -3,14 +3,14 @@
 namespace SocialDept\AtpSignals\Tests\Unit;
 
 use Orchestra\Testbench\TestCase;
+use PHPUnit\Framework\Attributes\Test;
 use SocialDept\AtpSignals\Events\CommitEvent;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Signals\Signal;
 
 class SignalTest extends TestCase
 {
-    /** @test */
-    public function it_can_create_a_signal()
+    #[Test]    public function it_can_create_a_signal()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -28,8 +28,7 @@ class SignalTest extends TestCase
         $this->assertEquals(['commit'], $signal->eventTypes());
     }
 
-    /** @test */
-    public function it_can_filter_by_exact_collection()
+    #[Test]    public function it_can_filter_by_exact_collection()
     {
         $signal = new class () extends Signal {
             public function eventTypes(): array
@@ -63,8 +62,7 @@ class SignalTest extends TestCase
         $this->assertTrue($signal->shouldHandle($event));
     }
 
-    /** @test */
-    public function it_can_filter_by_wildcard_collection()
+    #[Test]    public function it_can_filter_by_wildcard_collection()
     {
         $signalClass = new class () extends Signal {
             public function eventTypes(): array
