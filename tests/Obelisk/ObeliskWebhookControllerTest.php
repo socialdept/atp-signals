@@ -183,6 +183,62 @@ class ObeliskWebhookControllerTest extends TestCase
         Queue::assertPushed(ProcessObeliskBatchJob::class, 1);
     }
 
+    #[Test]    public function it_refuses_with_503_once_the_queue_is_saturated()
+    {
+        config()->set('atp-signals.obelisk.queue_events', true);
+        config()->set('atp-signals.obelisk.max_queue_depth', 3);
+        Queue::fake();
+
+        // Fill to the ceiling for real — each accepted delivery queues one job.
+        foreach (range(1, 3) as $i) {
+            $this->deliver($this->payload([$this->makeEvent(['cursor' => (string) $i])]))->assertOk();
+        }
+
+        // Accepting is cheap and handling is not, so past the ceiling we stop
+        // taking work. The archive holds its cursor and re-sends this batch.
+        $this->deliver($this->payload([$this->makeEvent(['cursor' => '4'])]))
+            ->assertStatus(503)
+            ->assertJsonFragment(['error' => 'Queue saturated'])
+            ->assertHeader('Retry-After', '60');
+
+        // Nothing extra was queued by the refused delivery.
+        Queue::assertPushed(ProcessObeliskBatchJob::class, 3);
+    }
+
+    #[Test]    public function it_accepts_while_the_queue_is_below_the_ceiling()
+    {
+        config()->set('atp-signals.obelisk.queue_events', true);
+        config()->set('atp-signals.obelisk.max_queue_depth', 3);
+        Queue::fake();
+
+        foreach (range(1, 2) as $i) {
+            $this->deliver($this->payload([$this->makeEvent(['cursor' => (string) $i])]))->assertOk();
+        }
+
+        Queue::assertPushed(ProcessObeliskBatchJob::class, 2);
+    }
+
+    #[Test]    public function the_brake_is_off_when_handling_inline()
+    {
+        // Inline handling makes the request itself the backpressure — the
+        // archive waits for the response — so the depth check is skipped.
+        config()->set('atp-signals.obelisk.queue_events', false);
+        config()->set('atp-signals.obelisk.max_queue_depth', 1);
+
+        $this->deliver($this->payload([$this->makeEvent()]))->assertOk();
+    }
+
+    #[Test]    public function a_zero_ceiling_disables_the_brake()
+    {
+        config()->set('atp-signals.obelisk.queue_events', true);
+        config()->set('atp-signals.obelisk.max_queue_depth', 0);
+        Queue::fake();
+
+        foreach (range(1, 5) as $i) {
+            $this->deliver($this->payload([$this->makeEvent(['cursor' => (string) $i])]))->assertOk();
+        }
+    }
+
     #[Test]    public function it_returns_500_when_the_batch_cannot_be_accepted()
     {
         // A dispatcher that blows up stands in for a queue that will not take the job:

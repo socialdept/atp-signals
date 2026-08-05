@@ -3,10 +3,13 @@
 namespace SocialDept\AtpSignals\Commands;
 
 use Illuminate\Console\Command;
+use SocialDept\AtpSignals\Commands\Concerns\ResolvesObeliskSubscription;
 use SocialDept\AtpSignals\Obelisk\ObeliskClient;
 
 class ObeliskStatusCommand extends Command
 {
+    use ResolvesObeliskSubscription;
+
     protected $signature = 'signal:obelisk:status
                             {--name= : Only show the subscription with this name}';
 
@@ -21,6 +24,20 @@ class ObeliskStatusCommand extends Command
         $this->components->twoColumnDetail(
             'Push enabled',
             config('atp-signals.obelisk.enabled') ? '<fg=green>yes</>' : '<fg=gray>no</>'
+        );
+
+        // The pull cursor is the handoff number: `subscribe --from-cursor=pull`
+        // starts push delivery here, so a drained backfill is not replayed.
+        $pull = $this->pullCursor();
+        $this->components->twoColumnDetail(
+            'Pull cursor',
+            $pull === null ? '<fg=gray>never run</>' : (string) $pull
+        );
+
+        $max = (int) config('atp-signals.obelisk.max_queue_depth', 0);
+        $this->components->twoColumnDetail(
+            'Queue brake',
+            $max > 0 ? "503 at {$max} queued jobs" : '<fg=yellow>disabled</>'
         );
 
         try {

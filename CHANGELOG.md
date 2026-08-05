@@ -4,6 +4,19 @@ All notable changes to `socialdept/atp-signals` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-05
+
+### Added
+
+- **Queue-depth flow control** — the Obelisk webhook now answers `503` with `Retry-After` once `OBELISK_MAX_QUEUE_DEPTH` (default 100) jobs are waiting, instead of queueing more. Accepting a batch is cheap and handling one is not, so without a brake the archive outruns the worker and the queue grows unbounded; each job carries a whole batch of record bodies, so memory gives out long before the job count looks alarming. Refusing is safe — the archive advances its cursor only on a 2xx, so it backs off and re-sends the same batch. Set to 0 to disable. Skipped entirely when handling inline, where the request is already the backpressure.
+- **`signal:obelisk:pause` / `signal:obelisk:resume`** — stop and restart delivery by hand. The cursor holds while paused, so nothing is lost. `resume` also clears the backoff, which un-sticks a subscription the archive marked `failing`.
+- **`--from-cursor=pull` on `signal:obelisk:subscribe`** — start push delivery exactly where `signal:obelisk:pull` stopped, so a drained backfill is not replayed. This is the handoff for importing a large archive: drain history with pull (one page at a time, synchronous, resumable), then switch to push for steady state.
+- **`signal:obelisk:status`** now shows the stored pull cursor and whether the queue brake is armed.
+
+### Changed
+
+- `signal:obelisk:rewind` and `signal:obelisk:status` share subscription lookup via `Commands\Concerns\ResolvesObeliskSubscription` rather than duplicating it.
+
 ## [2.1.0] - 2026-08-04
 
 ### Added
@@ -63,6 +76,7 @@ See git history for changes prior to the v2.0 namespace + extraction work:
 - `1.1.x`, `1.0.x` — Initial stable releases.
 - `0.x` — Pre-release iterations.
 
+[2.2.0]: https://github.com/socialdept/atp-signals/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/socialdept/atp-signals/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/socialdept/atp-signals/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/socialdept/atp-signals/compare/v2.0.0...v2.0.1

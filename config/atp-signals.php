@@ -81,6 +81,14 @@ return [
         'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
         'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
 
+        // Flow control. Refuse a delivery with 503 once this many jobs are
+        // waiting, so the archive backs off instead of burying the queue.
+        // Accepting is cheap and handling is not, so without this the archive
+        // outruns the worker; each job carries a full batch of record bodies,
+        // so memory gives out long before the job count looks alarming. Keep it
+        // low for that reason. 0 disables the brake.
+        'max_queue_depth' => (int) env('OBELISK_MAX_QUEUE_DEPTH', 100),
+
         // Pull consumer.
         'pull' => [
             // Events per getEvents page.

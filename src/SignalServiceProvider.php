@@ -8,7 +8,9 @@ use SocialDept\AtpSignals\Commands\ConsumeCommand;
 use SocialDept\AtpSignals\Commands\InstallCommand;
 use SocialDept\AtpSignals\Commands\ListSignalsCommand;
 use SocialDept\AtpSignals\Commands\MakeSignalCommand;
+use SocialDept\AtpSignals\Commands\ObeliskPauseCommand;
 use SocialDept\AtpSignals\Commands\ObeliskPullCommand;
+use SocialDept\AtpSignals\Commands\ObeliskResumeCommand;
 use SocialDept\AtpSignals\Commands\ObeliskRewindCommand;
 use SocialDept\AtpSignals\Commands\ObeliskStatusCommand;
 use SocialDept\AtpSignals\Commands\ObeliskSubscribeCommand;
@@ -151,6 +153,8 @@ class SignalServiceProvider extends ServiceProvider
                 ObeliskStatusCommand::class,
                 ObeliskRewindCommand::class,
                 ObeliskPullCommand::class,
+                ObeliskPauseCommand::class,
+                ObeliskResumeCommand::class,
             ]);
         }
 

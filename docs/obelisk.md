@@ -155,9 +155,39 @@ Both planes carry the same event. Push wraps it in `{subscription, cursor, event
 | `signal:obelisk:status` | Archive reachability, subscriptions, cursors, failure counts |
 | `signal:obelisk:rewind {cursor}` | Rewind a subscription (`--id`/`--name`) or the pull cursor (`--pull`) to replay |
 | `signal:obelisk:pull` | Drain new events once and exit |
+| `signal:obelisk:pause` | Stop delivery; the cursor holds, nothing is lost |
+| `signal:obelisk:resume` | Restart delivery and clear the backoff (also un-sticks a `failing` subscription) |
 | `signal:consume` | Run the pull consumer continuously (`SIGNAL_MODE=obelisk`) |
 
-`subscribe` and `rewind` are dry-run by default. Pass `--execute` to act.
+`subscribe`, `rewind`, `pause` and `resume` are dry-run by default. Pass `--execute` to act.
+
+## Flow control
+
+Accepting a batch is cheap — a queue push — while handling one is not. Since the archive delivers as fast as you answer, a consumer that acks quickly and processes slowly will let the queue grow without bound. Each job carries a whole batch of record bodies, so memory gives out long before the job count looks alarming.
+
+`OBELISK_MAX_QUEUE_DEPTH` (default 100) is the brake. Once that many jobs are waiting, the webhook answers **503 with `Retry-After`** instead of queueing. The archive advances its cursor only on a 2xx, so it backs off and re-sends the same batch — nothing is lost, you simply stop taking work you cannot keep up with. Set it to 0 to disable, and keep it low: the jobs are fat.
+
+Obelisk treats 429 and 503 as flow control rather than failure, so throttling does **not** count toward the threshold that retires a subscription. A consumer can push back for hours without retiring itself.
+
+The brake only applies when queueing. Handling inline (`OBELISK_QUEUE_EVENTS=false`) makes the request itself the backpressure, since the archive waits for the response.
+
+## Draining a large backlog
+
+Push delivery is the wrong tool for a first import of an archive that already holds hundreds of thousands of records: every batch lands in the queue as fat payloads, and the brake will spend most of its time engaged.
+
+Pull instead — it cannot outrun itself:
+
+```bash
+SIGNAL_MODE=obelisk php artisan signal:obelisk:pull
+```
+
+One page at a time, processed synchronously, cursor persisted after each. It resumes where it stopped if it dies at record 300,000. When it has caught up, hand the position straight to push delivery:
+
+```bash
+php artisan signal:obelisk:subscribe --from-cursor=pull --execute
+```
+
+`--from-cursor=pull` reads the stored pull cursor, so the archive replays only what arrived after the drain rather than the entire log. `signal:obelisk:status` shows that cursor alongside the subscriptions.
 
 ## Replay
 
