@@ -3,16 +3,19 @@
 namespace SocialDept\AtpSignals\Commands;
 
 use Illuminate\Console\Command;
+use SocialDept\AtpSignals\Commands\Concerns\ResolvesObeliskSubscription;
 use SocialDept\AtpSignals\Obelisk\ObeliskClient;
 use SocialDept\AtpSignals\Services\SignalRegistry;
 
 class ObeliskSubscribeCommand extends Command
 {
+    use ResolvesObeliskSubscription;
+
     protected $signature = 'signal:obelisk:subscribe
                             {--name= : Subscription name (defaults to the app name, slugged)}
                             {--url= : Webhook URL Obelisk should POST to (defaults to the app URL + configured path)}
                             {--collections=* : Collections to subscribe to (defaults to those your Signals declare)}
-                            {--from-cursor= : Start position — "start" for the whole log, or an event id (default: only new events)}
+                            {--from-cursor= : Start position — "pull" to continue where signal:obelisk:pull stopped, "start" for the whole log, or an event id (default: only new events)}
                             {--max-events=200 : Events per delivery}
                             {--max-wait-ms=5000 : How long a partial batch waits before delivery}
                             {--execute : Actually create or update the subscription}';
@@ -106,6 +109,13 @@ class ObeliskSubscribeCommand extends Command
         return array_values(array_unique($collections));
     }
 
+    /**
+     * Resolve `--from-cursor` to what the archive expects.
+     *
+     * `pull` is the handoff from a drained backfill: start push delivery exactly
+     * where the pull consumer stopped, so the archive replays only what arrived
+     * after it, rather than the entire log.
+     */
     protected function fromCursor(): string|int|null
     {
         $value = $this->option('from-cursor');
@@ -114,7 +124,23 @@ class ObeliskSubscribeCommand extends Command
             return null;
         }
 
-        return $value === 'start' ? 'start' : (int) $value;
+        if ($value === 'start') {
+            return 'start';
+        }
+
+        if ($value === 'pull') {
+            $cursor = $this->pullCursor();
+
+            if ($cursor === null) {
+                $this->components->warn('No stored pull cursor; falling back to new events only.');
+
+                return null;
+            }
+
+            return $cursor;
+        }
+
+        return (int) $value;
     }
 
     /**

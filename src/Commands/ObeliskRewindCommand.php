@@ -3,11 +3,14 @@
 namespace SocialDept\AtpSignals\Commands;
 
 use Illuminate\Console\Command;
+use SocialDept\AtpSignals\Commands\Concerns\ResolvesObeliskSubscription;
 use SocialDept\AtpSignals\Obelisk\ObeliskClient;
 use SocialDept\AtpSignals\Storage\CursorStoreFactory;
 
 class ObeliskRewindCommand extends Command
 {
+    use ResolvesObeliskSubscription;
+
     protected $signature = 'signal:obelisk:rewind
                             {cursor : Event id to resume from — 0 replays the whole log}
                             {--id= : Subscription id (push mode)}
@@ -76,36 +79,4 @@ class ObeliskRewindCommand extends Command
         return self::SUCCESS;
     }
 
-    protected function resolveSubscriptionId(ObeliskClient $client): ?int
-    {
-        if ($id = $this->option('id')) {
-            return (int) $id;
-        }
-
-        $name = $this->option('name');
-
-        if (! $name) {
-            $this->components->error('Pass --id, --name, or --pull.');
-
-            return null;
-        }
-
-        try {
-            $webhooks = $client->getWebhooks()['webhooks'] ?? [];
-        } catch (\Throwable $e) {
-            $this->components->error('Could not list subscriptions: '.$e->getMessage());
-
-            return null;
-        }
-
-        foreach ($webhooks as $webhook) {
-            if (($webhook['name'] ?? null) === $name) {
-                return (int) $webhook['id'];
-            }
-        }
-
-        $this->components->error("No subscription named \"{$name}\".");
-
-        return null;
-    }
 }
