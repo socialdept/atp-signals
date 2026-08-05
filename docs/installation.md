@@ -128,26 +128,28 @@ SIGNAL_FIREHOSE_HOST=bsky.network
 - Client-side filtering only (higher bandwidth)
 - More processing overhead
 
-### Tap Mode
+### Obelisk Mode
 
-Best for production webhook delivery with automatic backfilling:
+Best for delivery that survives downtime and can be replayed:
 
 ```env
-TAP_ENABLED=true
-TAP_URL=http://localhost:7374
-TAP_ADMIN_PASSWORD=your-secret-password
+OBELISK_ENABLED=true
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=your-archive-bearer-token
+OBELISK_WEBHOOK_SECRET=from-createWebhook
 ```
 
 **Advantages:**
-- No long-running PHP process
-- Automatic backfilling of historical events
-- Process manager integration (Supervisor/systemd)
+- Durable event log — a consumer that was down resumes where it stopped
+- Replay by rewinding a cursor
+- Batched delivery that cannot flood your app
+- Push (no long-running PHP process) or pull (no inbound URL)
 
 **Trade-offs:**
-- Requires an external Go binary
-- HTTP overhead per event
+- Requires running Obelisk and Postgres alongside your app
+- Commit events only (no identity or account stream)
 
-[Learn more about choosing the right mode →](modes.md) | [Learn more about Tap →](tap.md)
+[Learn more about choosing the right mode →](modes.md) | [Learn more about Obelisk →](obelisk.md)
 
 ## Verify Installation
 

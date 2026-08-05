@@ -499,7 +499,7 @@ Understanding the Signal lifecycle helps you write better Signals:
 
 ### 1. Event Arrives
 
-An event arrives from the AT Protocol (via Jetstream, Firehose, or Tap webhook).
+An event arrives from the AT Protocol (via Jetstream, Firehose, or an Obelisk archive).
 
 ### 2. Event Type Matching
 

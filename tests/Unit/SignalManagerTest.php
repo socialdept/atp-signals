@@ -15,18 +15,6 @@ class SignalManagerTest extends TestCase
         return [SignalServiceProvider::class];
     }
 
-    #[Test]    public function it_throws_a_helpful_error_when_tap_mode_is_used_with_start()
-    {
-        config()->set('atp-signals.mode', 'tap');
-
-        $manager = $this->app->make(SignalManager::class);
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Tap mode uses webhook delivery');
-
-        $manager->start();
-    }
-
     #[Test]    public function it_throws_for_unknown_modes()
     {
         config()->set('atp-signals.mode', 'mystery');
@@ -34,9 +22,18 @@ class SignalManagerTest extends TestCase
         $manager = $this->app->make(SignalManager::class);
 
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage("Must be 'jetstream', 'firehose', or 'tap'");
+        $this->expectExceptionMessage("Must be 'jetstream', 'firehose', or 'obelisk'");
 
         $manager->start();
+    }
+
+    #[Test]    public function it_resolves_the_obelisk_consumer_for_obelisk_mode()
+    {
+        config()->set('atp-signals.mode', 'obelisk');
+
+        $manager = $this->app->make(SignalManager::class);
+
+        $this->assertSame('obelisk', $manager->getMode());
     }
 
     #[Test]    public function it_reports_the_configured_mode()

@@ -13,7 +13,8 @@ class SignalEvent implements EventContract
         public ?CommitEvent $commit = null,
         public ?IdentityEvent $identity = null,
         public ?AccountEvent $account = null,
-        public ?bool $backfill = null, // null for jetstream/firehose, true/false for tap
+        public ?bool $backfill = null, // null for jetstream/firehose, true/false for obelisk
+        public ?string $cursor = null, // obelisk event id; null for jetstream/firehose
     ) {
     }
 
@@ -69,6 +70,7 @@ class SignalEvent implements EventContract
             identity: $identity,
             account: $account,
             backfill: $data['backfill'] ?? null,
+            cursor: isset($data['cursor']) ? (string) $data['cursor'] : null,
         );
     }
 
@@ -85,6 +87,10 @@ class SignalEvent implements EventContract
 
         if ($this->backfill !== null) {
             $array['backfill'] = $this->backfill;
+        }
+
+        if ($this->cursor !== null) {
+            $array['cursor'] = $this->cursor;
         }
 
         return $array;

@@ -9,9 +9,19 @@ class FileCursorStore implements CursorStore
 {
     protected string $path;
 
-    public function __construct()
+    /**
+     * @param  string|null  $suffix  Appended to the filename stem, so each consumer
+     *                               mode keeps an independent position.
+     */
+    public function __construct(?string $suffix = null)
     {
         $this->path = config('atp-signals.cursor_config.file.path', storage_path('signal/cursor.json'));
+
+        if ($suffix) {
+            $extension = pathinfo($this->path, PATHINFO_EXTENSION);
+            $stem = $extension ? substr($this->path, 0, -(strlen($extension) + 1)) : $this->path;
+            $this->path = $stem.'-'.$suffix.($extension ? ".{$extension}" : '');
+        }
 
         // Ensure directory exists
         $directory = dirname($this->path);

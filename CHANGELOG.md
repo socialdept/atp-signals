@@ -4,25 +4,31 @@ All notable changes to `socialdept/atp-signals` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.0] - 2026-05-24
+## [2.1.0] - 2026-08-04
 
 ### Added
 
-- **Tap mode** — Webhook-based event delivery via the `tap` Go binary from `bluesky-social/indigo`. No long-running PHP process, automatic backfilling of historical events for tracked DIDs.
-  - `SocialDept\AtpSignals\Tap\TapClient` — HTTP client for the Tap admin API (`addRepo`, `removeRepo`, `health`).
-  - `SocialDept\AtpSignals\Tap\TapWebhookController` and `TapBulkWebhookController` — receive single-event and batched payloads from Tap, normalize, and dispatch through `EventDispatcher`. Auto-registered when `TAP_ENABLED=true`.
-  - `SocialDept\AtpSignals\Tap\TapEventNormalizer` — converts Tap's wire format to `SignalEvent`.
-  - `SocialDept\AtpSignals\Tap\Models\TapRepo` and `TapRepoRecord` — read-only Eloquent models bound to the Tap SQLite database for repo/record introspection.
-  - New artisan commands: `signal:tap:add`, `signal:tap:remove`, `signal:tap:status`, `signal:tap:restart`.
-  - `bin/tap-batcher/` — Optional Bun HTTP proxy that sits between Tap and Laravel. Tap POSTs single events to the batcher; the batcher buffers and forwards batches to `TapBulkWebhookController` to keep per-event HTTP overhead down during backfills. Each Tap request stays open until its batch is delivered (2xx) or all retries fail (5xx) — Tap's `outbox_buffers` is the durable retry buffer, no in-memory events lost on restart. Configured via `atp-signals.tap.batcher.{enabled,host,port,path,batch_size,batch_timeout,insecure_tls}`.
-- **`SignalEvent::$backfill`** — new optional `?bool $backfill = null` constructor parameter. `null` for Jetstream/Firehose, `true`/`false` for Tap events based on the `live` flag. Serialized in `toArray()` only when set.
+- **Obelisk mode** — consume the event log of an Obelisk archive, a self-hostable AT Protocol record store. Two directions over the same log, usable together:
+  - **Push.** `SocialDept\AtpSignals\Obelisk\ObeliskWebhookController` receives batched, HMAC-signed deliveries. Auto-registered when `OBELISK_ENABLED=true`. Obelisk owns the cursor and advances it only on a 2xx, so a rejected or failed delivery is redelivered rather than lost. Signature verification fails closed when no secret is configured.
+  - **Pull.** `ObeliskConsumer` polls `getEvents` from a stored cursor — no inbound URL needed. Wired into `signal:consume` as `SIGNAL_MODE=obelisk`, with `signal:obelisk:pull` for scheduled catch-up runs.
+  - `ObeliskClient` — client for the archive's XRPC surface: events, webhooks, watched DIDs, repo backfills, and record queries, plus `query()`/`procedure()` escape hatches.
+  - `ProcessObeliskBatchJob` — one job per delivery rather than per event, so events keep their cursor order through the queue.
+  - `ObeliskBatchProcessor` and `ObeliskEventNormalizer` — shared by push and pull; a malformed event is skipped and logged rather than stranding its batch.
+  - New artisan commands: `signal:obelisk:subscribe`, `signal:obelisk:status`, `signal:obelisk:rewind`, `signal:obelisk:pull`. `subscribe` and `rewind` are dry-run by default and take `--execute`.
+  - `docs/obelisk.md` — mode guide (setup, delivery guarantees, replay, troubleshooting).
+- **`SignalEvent::$backfill`** — new optional `?bool $backfill = null` constructor parameter. `null` for Jetstream/Firehose, `true`/`false` for Obelisk events based on the `live` flag. Serialized in `toArray()` only when set.
+- **`SignalEvent::$cursor`** — new optional `?string $cursor = null` constructor parameter carrying the Obelisk event id. `null` for Jetstream/Firehose. Serialized in `toArray()` only when set.
+- **Namespaced cursor stores** — `DatabaseCursorStore`, `RedisCursorStore`, and `FileCursorStore` accept an optional key so consumer modes keep independent positions, and `CursorStoreFactory::make()` builds the configured driver. Behavior is unchanged when no key is passed.
 - **`SignalServiceProvider`** auto-discovers signals in the configured directory in addition to those listed in config (was previously config-only).
-- `docs/tap.md` — Tap mode guide (configuration, commands, batcher, troubleshooting).
 
 ### Changed
 
-- `SignalManager::start()` now throws a helpful `InvalidArgumentException` when `mode=tap` is configured, explaining that Tap uses webhook delivery and has no consumer to start.
-- `README.md` and `docs/{installation,modes,configuration}.md` updated to cover the three consumption modes (Jetstream, Firehose, Tap).
+- `SignalManager::start()` resolves the Obelisk consumer for `mode=obelisk`; its unknown-mode error names the three valid modes.
+- `README.md` and `docs/{installation,modes,configuration,signals}.md` updated to cover the three consumption modes (Jetstream, Firehose, Obelisk).
+
+### Removed
+
+- **Tap mode**, which was built but never released. The `src/Tap` subsystem, the `signal:tap:*` commands, the `bin/tap-batcher` Bun proxy, and the `tap` config block are gone. Obelisk covers the same webhook-delivery use case with a durable, replayable log behind it, and Tap's per-event delivery flooded receiving apps during backfill. Recoverable from git history.
 
 ## [2.0.2] - 2026-04-29
 

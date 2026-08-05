@@ -4,15 +4,16 @@ Signal supports three modes for consuming AT Protocol events. Understanding the 
 
 ## Quick Comparison
 
-| Feature              | Jetstream         | Firehose               | Tap                          |
-|----------------------|-------------------|------------------------|------------------------------|
-| **Event Format**     | Simplified JSON   | Raw CBOR/CAR           | JSON (via webhook)           |
-| **Delivery**         | WebSocket         | WebSocket              | HTTP webhooks                |
-| **Filtering**        | Server-side       | Client-side            | Server-side (collection)     |
-| **PHP Process**      | Long-running      | Long-running           | None (handles HTTP requests) |
-| **Backfilling**      | No                | No                     | Automatic                    |
-| **External Service** | No                | No                     | Yes (Go binary)              |
-| **Best For**         | Most applications | Comprehensive indexing | Production webhook delivery  |
+| Feature              | Jetstream         | Firehose               | Obelisk                          |
+|----------------------|-------------------|------------------------|----------------------------------|
+| **Event Format**     | Simplified JSON   | Raw CBOR/CAR           | JSON (webhook or poll)           |
+| **Delivery**         | WebSocket         | WebSocket              | HTTP webhooks, or cursor polling |
+| **Filtering**        | Server-side       | Client-side            | Server-side (collection, action, record fields, audience) |
+| **PHP Process**      | Long-running      | Long-running           | None for push, one for pull      |
+| **Replay**           | No                | No                     | Yes — rewind a cursor            |
+| **Backfilling**      | No                | No                     | Yes (archive-side)               |
+| **External Service** | No                | No                     | Yes (Obelisk + Postgres)         |
+| **Best For**         | Most applications | Comprehensive indexing | Durable delivery you can replay  |
 
 ## Jetstream Mode
 
@@ -243,38 +244,52 @@ The WebSocket URL is constructed as:
 wss://{host}/xrpc/com.atproto.sync.subscribeRepos
 ```
 
-## Tap Mode
+## Obelisk Mode
 
-Tap is a **Go binary service** that delivers AT Protocol events via HTTP webhooks instead of WebSocket connections. It runs as an external service managed by Supervisor or systemd.
+Obelisk is a **self-hostable AT Protocol record archive** that syncs collections from the network and serves them over an authenticated XRPC API. Signal consumes its event log either way round: Obelisk POSTs batched, HMAC-signed deliveries to your app (push), or your app polls the log from a stored cursor (pull).
 
-### When to Use Tap
+### When to Use Obelisk
 
-Choose Tap if you're:
+Choose Obelisk if you're:
 
-- Running in production and want webhook-based delivery
-- Tracking specific repositories (users) and need automatic backfilling
-- Avoiding long-running PHP processes
-- Want a process manager (Supervisor) to handle reconnection
+- Running in production and want delivery that survives your app being down
+- Wanting to replay events after a bug, rather than losing them
+- Filtering on more than a collection name (record field matchers, audiences, link-based feeds)
+- Avoiding a long-running PHP process (push), or unable to receive webhooks (pull)
 
 ### Configuration
 
-Enable Tap in your `.env`:
-
 ```env
-TAP_ENABLED=true
-TAP_URL=http://localhost:7374
-TAP_ADMIN_PASSWORD=your-secret-password
+OBELISK_ENABLED=true
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=your-archive-bearer-token
+OBELISK_WEBHOOK_SECRET=from-createWebhook
+
+# Pull mode only
+SIGNAL_MODE=obelisk
 ```
 
 ### Advantages
 
-**1. No Long-Running PHP Process**
+**1. The archive is the buffer**
 
-Tap runs as a Go binary. Your Laravel app just handles webhook requests — no `signal:consume` needed.
+Events accumulate durably. A consumer down for a week resumes exactly where it stopped; the cursor never advanced.
 
-**2. Automatic Backfilling**
+**2. Replay**
 
-When you add a new repo to track, Tap automatically backfills historical events. Your Signal can detect backfilled events:
+Rewind a cursor and the same events come back in order:
+
+```bash
+php artisan signal:obelisk:rewind 0 --name=my-app --execute
+```
+
+**3. Batched delivery, never a flood**
+
+A full batch is delivered immediately, a partial batch at most once per `max_wait_ms`. Backfills arrive at a rate your app can absorb.
+
+**4. Backfill flag**
+
+Historical events arrive with `live: false`:
 
 ```php
 if ($event->backfill) {
@@ -282,38 +297,21 @@ if ($event->backfill) {
 }
 ```
 
-**3. Process Manager Integration**
-
-Tap integrates with Supervisor/systemd. The `signal:tap:restart` command writes env files and can trigger restarts automatically:
-
-```bash
-php artisan signal:tap:restart
-```
-
-**4. Collection Filter Management**
-
-The restart command automatically resolves collection filters from your registered Signals:
-
-```bash
-php artisan signal:tap:restart --write-only
-# Writes: TAP_COLLECTION_FILTERS='app.bsky.feed.post,site.standard.publication,...'
-```
-
 ### Trade-offs
 
 **1. External Service Required**
 
-Tap requires installing and running a Go binary alongside your application.
+Obelisk is a Bun process plus Postgres (and Tab for network sync) running alongside your application.
 
-**2. No Raw CBOR/CAR Access**
+**2. Commit events only**
 
-Like Jetstream, Tap delivers simplified JSON events. Use Firehose if you need raw data.
+The archive's event log has no identity or account stream. Use Jetstream or Firehose if you need those.
 
-**3. HTTP Overhead**
+**3. Latency**
 
-Each event requires an HTTP round-trip, which adds latency compared to WebSocket streaming.
+Push adds an HTTP round-trip and up to `max_wait_ms` for a partial batch. Pull adds up to `poll_interval`.
 
-[Learn more about Tap →](tap.md)
+[Learn more about Obelisk →](obelisk.md)
 
 ## Choosing the Right Mode
 
@@ -324,8 +322,8 @@ Do you need raw CBOR/CAR access?
 ├─ Yes → Use Firehose
 └─ No
     │
-    Do you want webhook delivery (no long-running PHP)?
-    ├─ Yes → Use Tap
+    Do you need replay, durable buffering, or webhook delivery?
+    ├─ Yes → Use Obelisk
     └─ No
         │
         Do you want server-side filtering?
@@ -369,7 +367,7 @@ public function collections(): ?array
 }
 ```
 
-**AppView Sync (Tap)**
+**AppView Sync (Obelisk)**
 
 ```php
 // Sync custom collections with automatic backfilling
@@ -546,22 +544,22 @@ SIGNAL_MODE=firehose php artisan signal:consume
 Signals work in all modes without changes. The main difference is:
 - Jetstream provides server-side filtering (more efficient)
 - Firehose provides raw CBOR/CAR data access (more comprehensive)
-- Tap provides webhook delivery with automatic backfilling
+- Obelisk provides replayable delivery, push or pull
 
-Tap adds one extra property: `$event->backfill` (boolean) to distinguish live events from backfilled ones. This property is `null` for Jetstream/Firehose events.
+Obelisk adds two extra properties: `$event->backfill` (boolean) to distinguish live events from historical ones, and `$event->cursor` (string) carrying the archive event id. Both are `null` for Jetstream/Firehose events.
 
 ### How do I know which mode I'm using?
 
 Check at runtime:
 
 ```php
-$mode = config('atp-signals.mode'); // 'jetstream' or 'firehose'
+$mode = config('atp-signals.mode'); // 'jetstream', 'firehose', or 'obelisk'
 ```
 
-For Tap, check if Tap is enabled:
+Push delivery is independent of the mode — check whether it is enabled:
 
 ```php
-$tapEnabled = config('atp-signals.tap.enabled'); // true or false
+$push = config('atp-signals.obelisk.enabled'); // true or false
 ```
 
 ### Can I switch modes while consuming?

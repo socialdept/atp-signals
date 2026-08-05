@@ -24,7 +24,7 @@ Think of it as Laravel's event listeners, but for the decentralized social web.
 
 - **Laravel-style code** - Familiar patterns you already know
 - **Real-time processing** - React to events as they happen
-- **Three consumption modes** - Jetstream (efficient JSON), Firehose (comprehensive CBOR), or Tap (webhook delivery)
+- **Three consumption modes** - Jetstream (efficient JSON), Firehose (comprehensive CBOR), or Obelisk (replayable archive delivery)
 - **AppView ready** - Full support for custom collections and protocols
 - **Production features** - Queue integration, cursor management, auto-reconnection
 - **Easy filtering** - Target specific collections, operations, and users with wildcards
@@ -119,8 +119,8 @@ Your Signal will now handle every matching event from the network. [Read the qui
 - [Filtering Events](docs/filtering.md) - Target specific collections and operations
 - [Queue Integration](docs/queues.md) - Process events asynchronously
 
-**Tap Mode**
-- [Tap Mode](docs/tap.md) - Webhook-based event delivery with automatic backfilling
+**Obelisk Mode**
+- [Obelisk Mode](docs/obelisk.md) - Archive-backed delivery, push or pull, with replay
 
 **Advanced**
 - [Configuration](docs/configuration.md) - All config options explained
@@ -168,9 +168,9 @@ Signal supports three modes for consuming AT Protocol events:
 
 - **Jetstream** (default) - Simplified JSON events with server-side filtering
 - **Firehose** - Raw CBOR/CAR format with client-side filtering
-- **Tap** - Webhook-based delivery via an external Go service with automatic backfilling
+- **Obelisk** - Replayable delivery from a self-hosted record archive, by webhook or by polling
 
-[Learn more about modes →](docs/modes.md) | [Learn more about Tap →](docs/tap.md)
+[Learn more about modes →](docs/modes.md) | [Learn more about Obelisk →](docs/obelisk.md)
 
 ### Wildcard Filtering
 
@@ -214,18 +214,17 @@ php artisan make:signal YourSignal
 # List all registered Signals
 php artisan signal:list
 
-# Start consuming events (Jetstream/Firehose)
+# Start consuming events (Jetstream/Firehose/Obelisk)
 php artisan signal:consume
 
 # Test a Signal with sample data
 php artisan signal:test YourSignal
 
-# Tap management
-php artisan signal:tap:restart          # Write env file and restart Tap
-php artisan signal:tap:restart --write-only  # Write env file only
-php artisan signal:tap:add {did}        # Add a repo to Tap tracking
-php artisan signal:tap:remove {did}     # Remove a repo from Tap tracking
-php artisan signal:tap:status           # Check Tap service health
+# Obelisk management
+php artisan signal:obelisk:subscribe --execute   # Create/update this app's webhook subscription
+php artisan signal:obelisk:status                # Archive health, subscriptions, cursors
+php artisan signal:obelisk:rewind {cursor} --name=my-app --execute  # Replay from a cursor
+php artisan signal:obelisk:pull                  # Drain new events once and exit
 ```
 
 ## Requirements

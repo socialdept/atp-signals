@@ -32,10 +32,11 @@ SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
 # Firehose Configuration
 SIGNAL_FIREHOSE_HOST=bsky.network
 
-# Tap Configuration (optional, webhook-based delivery)
-TAP_ENABLED=false
-TAP_URL=http://localhost:7374
-TAP_ADMIN_PASSWORD=
+# Obelisk Configuration (optional, archive-backed delivery)
+OBELISK_ENABLED=false
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=
+OBELISK_WEBHOOK_SECRET=
 
 # Cursor Storage (database, redis, or file)
 SIGNAL_CURSOR_STORAGE=database
@@ -128,53 +129,62 @@ SIGNAL_FIREHOSE_HOST=bsky.network
 SIGNAL_FIREHOSE_HOST=my-pds.example.com
 ```
 
-## Tap Configuration
+## Obelisk Configuration
 
-Tap is an optional Go binary service that delivers events via HTTP webhooks instead of WebSocket connections.
+Obelisk is a self-hostable AT Protocol record archive. Signal consumes its event log by webhook (push) or by polling (pull).
 
-### Enable Tap
+### Enable Obelisk
 
 ```php
-'tap' => [
-    'enabled' => env('TAP_ENABLED', false),
-    'base_url' => env('TAP_URL', 'http://localhost:7374'),
-    'admin_password' => env('TAP_ADMIN_PASSWORD'),
-    'webhook_path' => env('TAP_WEBHOOK_PATH', '/_atp/tap/webhook'),
+'obelisk' => [
+    'enabled' => env('OBELISK_ENABLED', false),
+    'base_url' => env('OBELISK_URL', 'http://localhost:6060'),
+    'token' => env('OBELISK_TOKEN'),
+    'timeout' => (int) env('OBELISK_TIMEOUT', 30),
+    'webhook_path' => env('OBELISK_WEBHOOK_PATH', '/_atp/obelisk/webhook'),
+    'webhook_secret' => env('OBELISK_WEBHOOK_SECRET'),
     'webhook_middleware' => ['api'],
-    'queue_events' => env('TAP_QUEUE_EVENTS', true),
-    'queue_connection' => env('TAP_QUEUE_CONNECTION'),
-    'queue_name' => env('TAP_QUEUE', 'tap'),
-    'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
-    'restart_command' => env('TAP_RESTART_COMMAND'),
+    'verify_signature' => env('OBELISK_VERIFY_SIGNATURE', true),
+    'queue_events' => env('OBELISK_QUEUE_EVENTS', true),
+    'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
+    'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
+    'pull' => [
+        'limit' => (int) env('OBELISK_PULL_LIMIT', 200),
+        'poll_interval' => (int) env('OBELISK_PULL_POLL_INTERVAL', 5),
+        'collection' => env('OBELISK_PULL_COLLECTION'),
+    ],
 ],
 ```
 
 **Environment Variables:**
 ```env
-TAP_ENABLED=true
-TAP_URL=http://localhost:7374
-TAP_ADMIN_PASSWORD=your-secret-password
-TAP_WEBHOOK_PATH=/_atp/tap/webhook
-TAP_QUEUE_EVENTS=true
-TAP_QUEUE_CONNECTION=redis
-TAP_QUEUE=tap
-TAP_ENV_PATH=/path/to/storage/tap/env
-TAP_RESTART_COMMAND="supervisorctl restart tap"
+OBELISK_ENABLED=true
+OBELISK_URL=http://localhost:6060
+OBELISK_TOKEN=your-archive-bearer-token
+OBELISK_WEBHOOK_SECRET=from-createWebhook
+OBELISK_QUEUE_CONNECTION=redis
+OBELISK_QUEUE=obelisk
 ```
 
 **Options:**
-- `enabled`: Register the webhook route (default: `false`)
-- `base_url`: Tap service API URL for management commands
-- `admin_password`: Shared password for API and webhook authentication
-- `webhook_path`: URL path where Tap sends events
+- `enabled`: Register the webhook route (default: `false`). Pull mode does not need it
+- `base_url`: Archive base URL
+- `token`: Bearer token minted by the archive's `create-token` script
+- `timeout`: HTTP timeout in seconds for archive calls (default: `30`)
+- `webhook_path`: URL path where Obelisk delivers batches
+- `webhook_secret`: HMAC signing secret, returned once by `createWebhook`
 - `webhook_middleware`: Middleware for the webhook route
-- `queue_events`: Queue incoming events vs process synchronously (default: `true`)
-- `queue_connection`: Queue connection for Tap jobs (null = default)
-- `queue_name`: Queue name for Tap jobs (default: `tap`)
-- `env_path`: File path where `signal:tap:restart` writes the env file
-- `restart_command`: Shell command to restart Tap after writing the env file
+- `verify_signature`: Verify the HMAC signature (default: `true`). Turning this off lets anything that can reach the route inject events
+- `queue_events`: Queue each batch instead of handling it in the request (default: `true`)
+- `queue_connection`: Queue connection for batch jobs (null = default)
+- `queue_name`: Queue name for batch jobs (default: `obelisk`)
+- `pull.limit`: Events per `getEvents` page (default: `200`)
+- `pull.poll_interval`: Seconds to wait once the backlog is drained (default: `5`). A full page never waits
+- `pull.collection`: Optional single-collection filter. Null polls every archived collection and lets each Signal filter
 
-[Learn more about Tap →](tap.md)
+Without a `webhook_secret`, deliveries are rejected rather than trusted.
+
+[Learn more about Obelisk →](obelisk.md)
 
 ## Cursor Storage
 
@@ -462,25 +472,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Tap Configuration
+    | Obelisk Configuration
     |--------------------------------------------------------------------------
     |
-    | Tap is a Go binary service that delivers events via HTTP webhooks.
-    | Enable it to receive events without a long-running PHP process.
+    | Obelisk is a self-hostable AT Protocol record archive. Push delivery
+    | (webhooks) and pull delivery (cursor polling) read the same event log.
     |
     */
 
-    'tap' => [
-        'enabled' => env('TAP_ENABLED', false),
-        'base_url' => env('TAP_URL', 'http://localhost:7374'),
-        'admin_password' => env('TAP_ADMIN_PASSWORD'),
-        'webhook_path' => env('TAP_WEBHOOK_PATH', '/_atp/tap/webhook'),
+    'obelisk' => [
+        'enabled' => env('OBELISK_ENABLED', false),
+        'base_url' => env('OBELISK_URL', 'http://localhost:6060'),
+        'token' => env('OBELISK_TOKEN'),
+        'timeout' => (int) env('OBELISK_TIMEOUT', 30),
+        'webhook_path' => env('OBELISK_WEBHOOK_PATH', '/_atp/obelisk/webhook'),
+        'webhook_secret' => env('OBELISK_WEBHOOK_SECRET'),
         'webhook_middleware' => ['api'],
-        'queue_events' => env('TAP_QUEUE_EVENTS', true),
-        'queue_connection' => env('TAP_QUEUE_CONNECTION'),
-        'queue_name' => env('TAP_QUEUE', 'tap'),
-        'env_path' => env('TAP_ENV_PATH', storage_path('tap/env')),
-        'restart_command' => env('TAP_RESTART_COMMAND'),
+        'verify_signature' => env('OBELISK_VERIFY_SIGNATURE', true),
+        'queue_events' => env('OBELISK_QUEUE_EVENTS', true),
+        'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
+        'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
+        'pull' => [
+            'limit' => (int) env('OBELISK_PULL_LIMIT', 200),
+            'poll_interval' => (int) env('OBELISK_PULL_POLL_INTERVAL', 5),
+            'collection' => env('OBELISK_PULL_COLLECTION'),
+        ],
     ],
 
     /*

@@ -5,6 +5,7 @@ namespace SocialDept\AtpSignals\Commands;
 use BackedEnum;
 use Exception;
 use Illuminate\Console\Command;
+use SocialDept\AtpSignals\Obelisk\ObeliskConsumer;
 use SocialDept\AtpSignals\Services\FirehoseConsumer;
 use SocialDept\AtpSignals\Services\JetstreamConsumer;
 use SocialDept\AtpSignals\Services\SignalRegistry;
@@ -14,7 +15,7 @@ class ConsumeCommand extends Command
     protected $signature = 'signal:consume
                             {--cursor= : Start from a specific cursor position}
                             {--fresh : Start from the beginning, ignoring stored cursor}
-                            {--mode= : Override mode (jetstream or firehose)}';
+                            {--mode= : Override mode (jetstream, firehose, or obelisk)}';
 
     protected $description = 'Start consuming events from the AT Protocol';
 
@@ -44,8 +45,8 @@ class ConsumeCommand extends Command
     {
         $mode = $this->option('mode') ?? config('atp-signals.mode', 'jetstream');
 
-        if (! in_array($mode, ['jetstream', 'firehose'])) {
-            $this->error("Invalid mode: {$mode}. Must be 'jetstream' or 'firehose'.");
+        if (! in_array($mode, ['jetstream', 'firehose', 'obelisk'])) {
+            $this->error("Invalid mode: {$mode}. Must be 'jetstream', 'firehose', or 'obelisk'.");
 
             return null;
         }
@@ -101,11 +102,11 @@ class ConsumeCommand extends Command
 
     private function displayModeInformation(string $mode): void
     {
-        if ($mode === 'jetstream') {
-            $this->components->warn('Jetstream Mode: Server-side filtering (custom collections may not receive create/update)');
-        } else {
-            $this->components->info('Firehose Mode: Client-side filtering (all events received, including custom collections)');
-        }
+        match ($mode) {
+            'jetstream' => $this->components->warn('Jetstream Mode: Server-side filtering (custom collections may not receive create/update)'),
+            'obelisk' => $this->components->info('Obelisk Mode: Polling the archive event log from a stored cursor ('.config('atp-signals.obelisk.base_url').')'),
+            default => $this->components->info('Firehose Mode: Client-side filtering (all events received, including custom collections)'),
+        };
 
         $this->newLine();
     }
@@ -132,9 +133,11 @@ class ConsumeCommand extends Command
 
     private function startConsumer(string $mode, ?int $cursor): int
     {
-        $consumer = $mode === 'firehose'
-            ? app(FirehoseConsumer::class)
-            : app(JetstreamConsumer::class);
+        $consumer = match ($mode) {
+            'firehose' => app(FirehoseConsumer::class),
+            'obelisk' => app(ObeliskConsumer::class),
+            default => app(JetstreamConsumer::class),
+        };
 
         $this->info("Starting {$mode} consumer... Press Ctrl+C to stop.");
 
