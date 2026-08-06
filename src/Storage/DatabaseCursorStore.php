@@ -29,7 +29,10 @@ class DatabaseCursorStore implements CursorStore
             ->where('key', $this->key)
             ->value('cursor');
 
-        return $cursor ? (int) $cursor : null;
+        // Compared against null, not truthiness: cursor 0 is a real position —
+        // "replay from the very beginning" — and treating it as absent makes a
+        // rewind to 0 indistinguishable from never having run.
+        return $cursor === null ? null : (int) $cursor;
     }
 
     public function set(int $cursor): void

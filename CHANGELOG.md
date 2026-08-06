@@ -4,6 +4,16 @@ All notable changes to `socialdept/atp-signals` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-06
+
+### Fixed
+- Cursor stores returned `null` for a stored cursor of `0`, because `0` is falsy.
+  A rewind to the start was therefore indistinguishable from never having run —
+  `signal:obelisk:status` printed "never run" straight after a successful
+  `signal:obelisk:rewind 0 --pull --execute`, which is precisely when an operator
+  is checking whether the rewind took. Affected the database and Redis stores;
+  the file store already used `?? null` and was correct.
+
 ## [2.2.0] - 2026-08-05
 
 ### Added
