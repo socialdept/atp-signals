@@ -57,7 +57,7 @@ class JetstreamV2Test extends TestCase
             '$type' => 'network.bsky.jetstream.subscribeEvents#sync',
             'did' => 'did:plc:diverged',
             'seq' => 7,
-            'rev' => '3krev',
+            'sync' => ['did' => 'did:plc:diverged', 'rev' => '3krev', 'seq' => 99],
         ]);
 
         $this->assertTrue($sync->isSync());
@@ -68,7 +68,7 @@ class JetstreamV2Test extends TestCase
             '$type' => 'network.bsky.jetstream.subscribeEvents#identity',
             'did' => 'did:plc:renamed',
             'seq' => 8,
-            'handle' => 'new.example.com',
+            'identity' => ['did' => 'did:plc:renamed', 'handle' => 'new.example.com', 'seq' => 99],
         ]);
 
         $this->assertTrue($identity->isIdentity());
@@ -78,13 +78,28 @@ class JetstreamV2Test extends TestCase
             '$type' => 'network.bsky.jetstream.subscribeEvents#account',
             'did' => 'did:plc:gone',
             'seq' => 9,
-            'active' => false,
-            'status' => 'deleted',
+            'account' => ['did' => 'did:plc:gone', 'active' => false, 'status' => 'deleted', 'seq' => 99],
         ]);
 
         $this->assertTrue($account->isAccount());
         $this->assertFalse($account->account->active);
         $this->assertSame('deleted', $account->account->status);
+    }
+
+    #[Test]
+    public function it_translates_flat_payloads_as_a_fallback()
+    {
+        $account = JetstreamV2Translator::toSignalEvent([
+            '$type' => 'network.bsky.jetstream.subscribeEvents#account',
+            'did' => 'did:plc:gone',
+            'seq' => 9,
+            'active' => false,
+            'status' => 'deactivated',
+        ]);
+
+        $this->assertTrue($account->isAccount());
+        $this->assertFalse($account->account->active);
+        $this->assertSame('deactivated', $account->account->status);
     }
 
     #[Test]

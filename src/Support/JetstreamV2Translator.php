@@ -71,21 +71,23 @@ class JetstreamV2Translator
                 break;
 
             case 'identity':
-                $identity = IdentityEvent::fromArray($payload);
+                $identity = IdentityEvent::fromArray(self::nested($payload, 'identity'));
 
                 break;
 
             case 'account':
-                if (! isset($payload['active'])) {
+                $account = self::nested($payload, 'account');
+
+                if (! isset($account['active'])) {
                     return null;
                 }
 
-                $account = AccountEvent::fromArray($payload);
+                $account = AccountEvent::fromArray($account);
 
                 break;
 
             case 'sync':
-                $sync = SyncEvent::fromArray($payload);
+                $sync = SyncEvent::fromArray(self::nested($payload, 'sync'));
 
                 break;
         }
@@ -100,6 +102,22 @@ class JetstreamV2Translator
             sync: $sync,
             seq: isset($payload['seq']) ? (int) $payload['seq'] : null,
         );
+    }
+
+    /**
+     * Identity, account, and sync payloads nest their object under the kind's
+     * key (commit fields sit flat). Falls back to the payload itself so a
+     * flat variant still translates.
+     */
+    protected static function nested(array $payload, string $key): array
+    {
+        $inner = $payload[$key] ?? null;
+
+        if (! is_array($inner) || $inner === []) {
+            return $payload;
+        }
+
+        return $inner + ['did' => $payload['did']];
     }
 
     protected static function kind(array $payload): ?string
