@@ -29,12 +29,15 @@ class WebSocketConnection
 
     /**
      * Connect to a WebSocket endpoint.
+     *
+     * @param  array  $subProtocols  WebSocket subprotocols to negotiate
+     *                               (e.g. ['xrpc.v1.json'] for Jetstream v2)
      */
-    public function connect(string $url): PromiseInterface
+    public function connect(string $url, array $subProtocols = []): PromiseInterface
     {
         $connector = new Connector($this->loop);
 
-        return $connector($url)->then(
+        return $connector($url, $subProtocols)->then(
             function (WebSocket $conn) {
                 $this->connection = $conn;
                 $this->connected = true;

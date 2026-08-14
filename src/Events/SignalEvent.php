@@ -9,12 +9,14 @@ class SignalEvent implements EventContract
     public function __construct(
         public string $did,
         public int $timeUs,
-        public string $kind, // 'commit', 'identity', 'account'
+        public string $kind, // 'commit', 'identity', 'account', 'sync'
         public ?CommitEvent $commit = null,
         public ?IdentityEvent $identity = null,
         public ?AccountEvent $account = null,
         public ?bool $backfill = null, // null for jetstream/firehose, true/false for obelisk
         public ?string $cursor = null, // obelisk event id; null for jetstream/firehose
+        public ?SyncEvent $sync = null, // jetstream v2 only; v1 never emits sync
+        public ?int $seq = null, // jetstream v2 cursor; null on other transports
     ) {
     }
 
@@ -31,6 +33,11 @@ class SignalEvent implements EventContract
     public function isAccount(): bool
     {
         return $this->kind === 'account';
+    }
+
+    public function isSync(): bool
+    {
+        return $this->kind === 'sync';
     }
 
     public function getCollection(): ?string
@@ -62,6 +69,10 @@ class SignalEvent implements EventContract
             ? AccountEvent::fromArray($data['account'])
             : null;
 
+        $sync = isset($data['sync'])
+            ? SyncEvent::fromArray(['did' => $data['did'], ...$data['sync']])
+            : null;
+
         return new self(
             did: $data['did'],
             timeUs: $data['time_us'],
@@ -71,6 +82,8 @@ class SignalEvent implements EventContract
             account: $account,
             backfill: $data['backfill'] ?? null,
             cursor: isset($data['cursor']) ? (string) $data['cursor'] : null,
+            sync: $sync,
+            seq: isset($data['seq']) ? (int) $data['seq'] : null,
         );
     }
 
@@ -84,6 +97,14 @@ class SignalEvent implements EventContract
             'identity' => $this->identity?->toArray(),
             'account' => $this->account?->toArray(),
         ];
+
+        if ($this->sync !== null) {
+            $array['sync'] = $this->sync->toArray();
+        }
+
+        if ($this->seq !== null) {
+            $array['seq'] = $this->seq;
+        }
 
         if ($this->backfill !== null) {
             $array['backfill'] = $this->backfill;

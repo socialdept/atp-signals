@@ -37,6 +37,36 @@ SIGNAL_MODE=jetstream
 SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
 ```
 
+### Jetstream v2
+
+The v2 wire (`SIGNAL_JETSTREAM_VERSION=2`) speaks
+`/xrpc/network.bsky.jetstream.subscribeEvents` against the v2 hosts:
+
+```env
+SIGNAL_JETSTREAM_VERSION=2
+SIGNAL_JETSTREAM_V2_URL=wss://jetstream.us-west.bsky.network
+```
+
+What changes compared to v1:
+
+- **Seq cursors.** v2 identifies events by a monotonic `seq` instead of a
+  `time_us` timestamp. The cursor is stored under its own `jetstream-v2` key,
+  so the two versions never read each other's positions. A fresh v2 consumer
+  seeds itself from an existing v1 cursor automatically (the server reads
+  cursor values >= 1e15 as unix-microsecond timestamps, which is exactly what
+  a v1 cursor is), so migrating loses nothing.
+- **Sync events.** A fourth event kind marking a repo divergence: the
+  account's records should be re-fetched from its PDS rather than folded from
+  the stream. Handle it with `SignalEventType::Sync` in `eventTypes()` and
+  read it from `$event->sync`. The v1 wire never emits this kind.
+- **Kinds filter.** The consumer tells the server which event kinds your
+  signals handle, so unhandled kinds never leave the server.
+- **Gap advisories.** When a stored cursor falls outside the server's lookback
+  window, the server clamps the stream and the package fires the
+  `SocialDept\AtpSignals\Events\CursorOutdated` Laravel event. Listen for it
+  to trigger a backfill (e.g. from the Jetstream archive) instead of silently
+  losing the gap.
+
 ### Available Endpoints
 
 Jetstream has multiple regional endpoints:
