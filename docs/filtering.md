@@ -17,7 +17,7 @@ Filtering lets you focus on what matters.
 
 Signal provides four filtering layers, applied in order:
 
-1. **Event Type Filtering** - Which kind of events (commit, identity, account)
+1. **Event Type Filtering** - Which kind of events (commit, identity, account, sync)
 2. **Collection Filtering** - Which AT Protocol collections
 3. **Operation Filtering** - Which operations (create, update, delete)
 4. **DID Filtering** - Which users
@@ -39,13 +39,14 @@ public function eventTypes(): array
 }
 ```
 
-**Three event types:**
+**Four event types:**
 
 | Type       | Description        | Use Cases                              |
 |------------|--------------------|----------------------------------------|
 | `commit`   | Repository changes | Posts, likes, follows, profile updates |
 | `identity` | Handle changes     | Username updates, account migrations   |
 | `account`  | Account status     | Deactivation, suspension               |
+| `sync`     | Repo divergence (Jetstream v2 only) | Re-fetch an account's records from its PDS |
 
 ### Multiple Event Types
 

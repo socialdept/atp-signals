@@ -166,7 +166,10 @@ public function collections(): ?array
 
 Signal supports three modes for consuming AT Protocol events:
 
-- **Jetstream** (default) - Simplified JSON events with server-side filtering
+- **Jetstream** (default) - Simplified JSON events with server-side filtering. Speaks
+  either wire version: v1 (`time_us` cursors), or v2 (`SIGNAL_JETSTREAM_VERSION=2`)
+  with seq cursors, a server-side kinds filter, repo-divergence `sync` events, and
+  `CursorOutdated` advisories surfaced as a Laravel event
 - **Firehose** - Raw CBOR/CAR format with client-side filtering
 - **Obelisk** - Replayable delivery from a self-hosted record archive, by webhook or by polling
 

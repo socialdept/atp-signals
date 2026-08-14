@@ -198,7 +198,7 @@ public function handle(SignalEvent $event): void
     // User's DID (decentralized identifier)
     $did = $event->did; // "did:plc:z72i7hdynmk6r22z27h6tvur"
 
-    // Event type (commit, identity, account)
+    // Event type (commit, identity, account, sync)
     $kind = $event->kind;
 
     // Timestamp in microseconds
