@@ -31,6 +31,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Jetstream Wire Version
+    |--------------------------------------------------------------------------
+    |
+    | 1: the legacy wire (/subscribe, wantedCollections, time_us cursors).
+    | 2: subscribeEvents with collections/kinds filters, seq cursors (stored
+    |    under their own 'jetstream-v2' cursor key, never mixed with v1),
+    |    sync events, and OutdatedCursor advisories surfaced as the
+    |    SocialDept\AtpSignals\Events\CursorOutdated Laravel event.
+    |
+    | A fresh v2 consumer seeds its position from the v1 cursor when one
+    | exists: v2 reads cursor values >= 1e15 as unix-microsecond timestamps,
+    | which is exactly what a v1 time_us cursor is.
+    |
+    */
+    'jetstream_version' => (int) env('SIGNAL_JETSTREAM_VERSION', 1),
+
+    'websocket_url_v2' => env('SIGNAL_JETSTREAM_V2_URL', 'wss://jetstream.us-west.bsky.network'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Firehose Configuration
     |--------------------------------------------------------------------------
     |
@@ -181,6 +201,9 @@ return [
         'reconnect_delay' => 5, // Base delay in seconds (exponential backoff)
         'max_reconnect_delay' => 60, // Maximum delay in seconds
         'timeout' => 60, // seconds
+        // Reconnect when no message arrives for this long, catching dead
+        // connections the socket never reports closed. 0 disables.
+        'idle_timeout' => (int) env('SIGNAL_IDLE_TIMEOUT', 60),
     ],
 
     /*

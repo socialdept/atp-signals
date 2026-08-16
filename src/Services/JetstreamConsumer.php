@@ -3,9 +3,13 @@
 namespace SocialDept\AtpSignals\Services;
 
 use Illuminate\Support\Facades\Log;
+use React\EventLoop\TimerInterface;
 use SocialDept\AtpSignals\Contracts\CursorStore;
+use SocialDept\AtpSignals\Events\CursorOutdated;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Exceptions\ConnectionException;
+use SocialDept\AtpSignals\Storage\CursorStoreFactory;
+use SocialDept\AtpSignals\Support\JetstreamV2Translator;
 use SocialDept\AtpSignals\Support\WebSocketConnection;
 
 class JetstreamConsumer
@@ -23,6 +27,10 @@ class JetstreamConsumer
     protected bool $shouldStop = false;
 
     protected ?\Exception $lastError = null;
+
+    protected ?TimerInterface $watchdogTimer = null;
+
+    protected float $lastMessageAt = 0;
 
     public function __construct(
         CursorStore $cursorStore,
@@ -48,6 +56,13 @@ class JetstreamConsumer
             $cursor = $this->cursorStore->get();
         }
 
+        // A v2 consumer with no position yet can seed from the v1 cursor: the
+        // server reads cursor values >= 1e15 as unix-microsecond timestamps,
+        // which is exactly what a v1 time_us cursor is.
+        if ($cursor === null && $this->version() === 2) {
+            $cursor = $this->seedCursorFromV1();
+        }
+
         // If cursor is explicitly 0, don't send it (fresh start)
         $url = $this->buildWebSocketUrl($cursor > 0 ? $cursor : null);
 
@@ -55,6 +70,7 @@ class JetstreamConsumer
             'url' => $url,
             'cursor' => $cursor > 0 ? $cursor : 'none (fresh start)',
             'mode' => 'jetstream',
+            'version' => $this->version(),
         ]);
 
         $this->connect($url);
@@ -77,6 +93,8 @@ class JetstreamConsumer
     {
         $this->shouldStop = true;
 
+        $this->disarmWatchdog();
+
         if ($this->connection) {
             $this->connection->close();
         }
@@ -85,15 +103,34 @@ class JetstreamConsumer
     }
 
     /**
-     * Connect to the Jetstream WebSocket.
+     * The Jetstream wire version to speak (1 or 2).
+     */
+    protected function version(): int
+    {
+        return (int) config('atp-signals.jetstream_version', 1);
+    }
+
+    /**
+     * Connect and run the event loop (blocking). Reconnects re-enter via
+     * establish() on a loop timer rather than calling this again.
      */
     protected function connect(string $url): void
+    {
+        $this->establish($url);
+        $this->connection->run();
+    }
+
+    /**
+     * Open a WebSocket connection asynchronously on the shared event loop.
+     */
+    protected function establish(string $url): void
     {
         $this->connection = new WebSocketConnection();
 
         // Set up event handlers
         $this->connection
             ->onMessage(function (string $message) {
+                $this->lastMessageAt = microtime(true);
                 $this->handleMessage($message);
             })
             ->onClose(function (?int $code, ?string $reason) {
@@ -103,10 +140,13 @@ class JetstreamConsumer
                 $this->handleError($e);
             });
 
+        $subProtocols = $this->version() === 2 ? ['xrpc.v1.json'] : [];
+
         // Connect to the WebSocket endpoint
-        $this->connection->connect($url)->then(
+        $this->connection->connect($url, $subProtocols)->then(
             function () {
                 $this->reconnectAttempts = 0;
+                $this->armWatchdog();
                 Log::info('[Signal] Connected to Jetstream successfully');
             },
             function (\Exception $e) {
@@ -119,9 +159,6 @@ class JetstreamConsumer
                 }
             }
         );
-
-        // Run the event loop (blocking)
-        $this->connection->run();
     }
 
     /**
@@ -134,6 +171,12 @@ class JetstreamConsumer
 
             if (! $data) {
                 Log::warning('[Signal] Failed to decode message');
+
+                return;
+            }
+
+            if ($this->version() === 2) {
+                $this->handleV2Payload(JetstreamV2Translator::payload($data));
 
                 return;
             }
@@ -152,6 +195,44 @@ class JetstreamConsumer
                 'trace' => $e->getTraceAsString(),
             ]);
         }
+    }
+
+    /**
+     * Handle a decoded Jetstream v2 payload.
+     */
+    protected function handleV2Payload(array $payload): void
+    {
+        if (JetstreamV2Translator::isInfo($payload)) {
+            Log::warning('[Signal] Jetstream advisory', [
+                'name' => $payload['name'] ?? null,
+                'message' => $payload['message'] ?? null,
+            ]);
+
+            if (($payload['name'] ?? null) === 'OutdatedCursor') {
+                event(new CursorOutdated(
+                    requestedCursor: $this->cursorStore->get(),
+                    message: $payload['message'] ?? null,
+                ));
+            }
+
+            return;
+        }
+
+        $event = JetstreamV2Translator::toSignalEvent($payload);
+
+        if ($event === null) {
+            Log::warning('[Signal] Unrecognized v2 payload', [
+                'type' => $payload['$type'] ?? null,
+            ]);
+
+            return;
+        }
+
+        if ($event->seq !== null) {
+            $this->cursorStore->set($event->seq);
+        }
+
+        $this->eventDispatcher->dispatch($event);
     }
 
     /**
@@ -183,7 +264,9 @@ class JetstreamConsumer
     }
 
     /**
-     * Attempt to reconnect to the Jetstream with exponential backoff.
+     * Schedule a reconnect on the event loop with exponential backoff. A loop
+     * timer (rather than a blocking sleep) keeps the loop responsive and the
+     * call stack flat across repeated reconnects.
      */
     protected function attemptReconnect(): void
     {
@@ -193,6 +276,7 @@ class JetstreamConsumer
             Log::error('[Signal] Max reconnection attempts reached');
 
             $this->lastError = new ConnectionException('Failed to reconnect to Jetstream after '.$maxAttempts.' attempts');
+            $this->disarmWatchdog();
             $this->connection?->stop();
 
             return;
@@ -215,12 +299,72 @@ class JetstreamConsumer
             'delay' => $delay,
         ]);
 
-        sleep($delay);
+        $this->connection->getLoop()->addTimer($delay, function () {
+            if ($this->shouldStop) {
+                return;
+            }
 
-        $cursor = $this->cursorStore->get();
-        $url = $this->buildWebSocketUrl($cursor);
+            $cursor = $this->cursorStore->get();
+            $this->establish($this->buildWebSocketUrl($cursor));
+        });
+    }
 
-        $this->connect($url);
+    /**
+     * Watch for silent dead connections: a Jetstream that sends nothing for
+     * longer than the idle timeout is treated as gone and reconnected, even
+     * when the socket never reported a close.
+     */
+    protected function armWatchdog(): void
+    {
+        $timeout = (int) config('atp-signals.connection.idle_timeout', 60);
+
+        if ($timeout <= 0) {
+            return;
+        }
+
+        $this->disarmWatchdog();
+        $this->lastMessageAt = microtime(true);
+
+        $interval = max(1, (int) ceil($timeout / 4));
+
+        $this->watchdogTimer = $this->connection->getLoop()->addPeriodicTimer($interval, function () use ($timeout) {
+            if ($this->shouldStop || ! $this->connection?->isConnected()) {
+                return;
+            }
+
+            if (microtime(true) - $this->lastMessageAt > $timeout) {
+                Log::warning('[Signal] No messages within idle timeout; reconnecting', [
+                    'idle_timeout' => $timeout,
+                ]);
+
+                $this->connection->close();
+            }
+        });
+    }
+
+    protected function disarmWatchdog(): void
+    {
+        if ($this->watchdogTimer && $this->connection) {
+            $this->connection->getLoop()->cancelTimer($this->watchdogTimer);
+        }
+
+        $this->watchdogTimer = null;
+    }
+
+    /**
+     * Seed a fresh v2 cursor from the legacy v1 position, if one exists.
+     */
+    protected function seedCursorFromV1(): ?int
+    {
+        $timeUs = CursorStoreFactory::make()->get();
+
+        if ($timeUs !== null && $timeUs > 0) {
+            Log::info('[Signal] Seeding v2 cursor from the v1 time_us position', [
+                'time_us' => $timeUs,
+            ]);
+        }
+
+        return $timeUs;
     }
 
     /**
@@ -228,6 +372,10 @@ class JetstreamConsumer
      */
     protected function buildWebSocketUrl(?int $cursor = null): string
     {
+        if ($this->version() === 2) {
+            return $this->buildV2WebSocketUrl($cursor);
+        }
+
         $baseUrl = config('atp-signals.websocket_url', 'wss://jetstream2.us-east.bsky.network');
         $url = rtrim($baseUrl, '/').'/subscribe';
 
@@ -266,6 +414,61 @@ class JetstreamConsumer
                     $params[] = 'wantedCollections='.$encoded;
                 }
             }
+        }
+
+        if (! empty($params)) {
+            $url .= '?'.implode('&', $params);
+        }
+
+        return $url;
+    }
+
+    /**
+     * Build the Jetstream v2 subscribeEvents URL. v2 renames the filters
+     * (collections, kinds) and adds a kinds filter so the server can skip
+     * event kinds no signal handles.
+     */
+    protected function buildV2WebSocketUrl(?int $cursor = null): string
+    {
+        $baseUrl = config('atp-signals.websocket_url_v2', 'wss://jetstream.us-west.bsky.network');
+        $url = rtrim($baseUrl, '/').'/xrpc/network.bsky.jetstream.subscribeEvents';
+
+        $params = [];
+
+        if ($cursor !== null) {
+            $params[] = 'cursor='.$cursor;
+        }
+
+        $signals = $this->signalRegistry->all();
+
+        $kinds = $signals
+            ->flatMap(fn ($signal) => $signal->eventTypes())
+            ->map(fn ($kind) => $kind instanceof \BackedEnum ? $kind->value : $kind)
+            ->unique()
+            ->filter()
+            ->values();
+
+        // A collections filter constrains commits only, so it is meaningless
+        // (and rejected by the server) when no signal handles commits.
+        $wantsCommits = $kinds->contains('commit');
+        $hasWildcardSignal = $signals->contains(fn ($signal) => $signal->collections() === null);
+
+        if ($wantsCommits && ! $hasWildcardSignal) {
+            $collections = $signals
+                ->flatMap(fn ($signal) => $signal->collections() ?? [])
+                ->unique()
+                ->filter()
+                ->values();
+
+            foreach ($collections as $collection) {
+                // Don't encode wildcards - Jetstream expects literal *
+                $encoded = str_replace('%2A', '*', urlencode($collection));
+                $params[] = 'collections='.$encoded;
+            }
+        }
+
+        foreach ($kinds as $kind) {
+            $params[] = 'kinds='.$kind;
         }
 
         if (! empty($params)) {

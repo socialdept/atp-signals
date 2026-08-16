@@ -34,8 +34,11 @@ class SignalServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/atp-signals.php', 'atp-signals');
 
-        // Register cursor store
-        $this->app->singleton(CursorStore::class, fn () => $this->makeCursorStore());
+        // Register cursor store. v2 seq cursors live under their own key:
+        // a v1 time_us and a v2 seq must never be read as one another.
+        $this->app->singleton(CursorStore::class, fn () => $this->makeCursorStore(
+            (int) config('atp-signals.jetstream_version', 1) === 2 ? 'jetstream-v2' : null
+        ));
 
         // Register signal registry
         $this->app->singleton(SignalRegistry::class, function ($app) {
