@@ -34,11 +34,10 @@ class SignalServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/atp-signals.php', 'atp-signals');
 
-        // Register cursor store. v2 seq cursors live under their own key:
-        // a v1 time_us and a v2 seq must never be read as one another.
-        $this->app->singleton(CursorStore::class, fn () => $this->makeCursorStore(
-            (int) config('atp-signals.jetstream_version', 1) === 2 ? 'jetstream-v2' : null
-        ));
+        // The default cursor store: the shared slot the firehose consumer and
+        // anything resolving the contract directly both use. Jetstream scopes
+        // its own key below rather than rebinding this one.
+        $this->app->singleton(CursorStore::class, fn () => $this->makeCursorStore());
 
         // Register signal registry
         $this->app->singleton(SignalRegistry::class, function ($app) {
@@ -63,7 +62,13 @@ class SignalServiceProvider extends ServiceProvider
         // Register Jetstream consumer
         $this->app->singleton(JetstreamConsumer::class, function ($app) {
             return new JetstreamConsumer(
-                $app->make(CursorStore::class),
+                // v2 seq cursors live under their own key: a v1 time_us and a
+                // v2 seq must never be read as one another. Scoped to this
+                // consumer so the firehose keeps its own position, the same
+                // way ObeliskConsumer takes its own store below.
+                $this->makeCursorStore(
+                    (int) config('atp-signals.jetstream_version', 1) === 2 ? 'jetstream-v2' : null
+                ),
                 $app->make(SignalRegistry::class),
                 $app->make(EventDispatcher::class),
             );
