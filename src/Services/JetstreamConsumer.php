@@ -50,25 +50,14 @@ class JetstreamConsumer
         $this->shouldStop = false;
         $this->lastError = null;
 
-        // Get cursor from storage if not explicitly provided
         // null = use stored cursor, 0 = start fresh (no cursor), >0 = specific cursor
-        if ($cursor === null) {
-            $cursor = $this->cursorStore->get();
-        }
+        $cursor = $this->resolveCursor($cursor);
 
-        // A v2 consumer with no position yet can seed from the v1 cursor: the
-        // server reads cursor values >= 1e15 as unix-microsecond timestamps,
-        // which is exactly what a v1 time_us cursor is.
-        if ($cursor === null && $this->version() === 2) {
-            $cursor = $this->seedCursorFromV1();
-        }
-
-        // If cursor is explicitly 0, don't send it (fresh start)
-        $url = $this->buildWebSocketUrl($cursor > 0 ? $cursor : null);
+        $url = $this->buildWebSocketUrl($cursor);
 
         Log::info('[Signal] Starting Jetstream consumer', [
             'url' => $url,
-            'cursor' => $cursor > 0 ? $cursor : 'none (fresh start)',
+            'cursor' => $cursor ?? 'none (fresh start)',
             'mode' => 'jetstream',
             'version' => $this->version(),
         ]);
@@ -304,8 +293,7 @@ class JetstreamConsumer
                 return;
             }
 
-            $cursor = $this->cursorStore->get();
-            $this->establish($this->buildWebSocketUrl($cursor));
+            $this->establish($this->buildWebSocketUrl($this->resolveCursor()));
         });
     }
 
@@ -349,6 +337,34 @@ class JetstreamConsumer
         }
 
         $this->watchdogTimer = null;
+    }
+
+    /**
+     * Resolve the position to connect from.
+     *
+     * Used by both the initial start and every reconnect: a reconnect that
+     * resolved the cursor differently would silently restart from live once
+     * the stored position is still empty, losing the v1 seed it was given.
+     *
+     * @param  int|null  $cursor  null = use the stored position, 0 = start
+     *                            fresh, >0 = an explicit position
+     * @return int|null The cursor to send, or null to start from live
+     */
+    protected function resolveCursor(?int $cursor = null): ?int
+    {
+        if ($cursor === null) {
+            $cursor = $this->cursorStore->get();
+        }
+
+        // A v2 consumer with no position yet can seed from the v1 cursor: the
+        // server reads cursor values >= 1e15 as unix-microsecond timestamps,
+        // which is exactly what a v1 time_us cursor is.
+        if ($cursor === null && $this->version() === 2) {
+            $cursor = $this->seedCursorFromV1();
+        }
+
+        // A cursor of 0 means "fresh start" here, so it is not sent.
+        return $cursor > 0 ? $cursor : null;
     }
 
     /**
