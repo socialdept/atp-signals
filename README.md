@@ -122,6 +122,9 @@ Your Signal will now handle every matching event from the network. [Read the qui
 **Obelisk Mode**
 - [Obelisk Mode](docs/obelisk.md) - Archive-backed delivery, push or pull, with replay
 
+**Streams**
+- [Streams](docs/streams.md) - Jetstream v2 and labeler streams in batches, for code that keeps its own cursor
+
 **Advanced**
 - [Configuration](docs/configuration.md) - All config options explained
 - [Testing](docs/testing.md) - Test your Signals
