@@ -4,6 +4,11 @@ All notable changes to `socialdept/atp-signals` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-10-21
+
+### Added
+- `Stream::open()` subscribes without running the event loop, so several streams can share one process, and `Stream::close()` ends one stream while the loop keeps running for the others. `start()` is `open()` then running the loop, as before.
+
 ## [2.3.2] - 2026-10-21
 
 ### Added

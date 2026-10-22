@@ -68,6 +68,22 @@ A stream asks for the cursor on every connect, by calling the closure given to `
 - **Save the cursor with the batch,** in the same transaction, and a crash between writing and saving can never skip or repeat work beyond that one batch.
 - **A cursor the server no longer holds** is refused before the socket opens. For Jetstream, `CursorTooOld` arrives in `onError` with the oldest position it holds. Call `stop()` there and catch up another way, such as Jetstream's archive.
 
+## Several streams in one process
+
+`start()` runs the event loop and blocks. To follow several labelers, or Jetstream and labelers together, open each stream and run the loop once. `close()` ends one stream and leaves the others running, and `stop()` ends a stream and the loop:
+
+```php
+use React\EventLoop\Loop;
+
+foreach ($labelers as $did => $endpoint) {
+    (new LabelStream($endpoint))
+        ->onBatch(fn (array $labels, ?int $seq) => $this->index($did, $labels, $seq))
+        ->open(fn () => Cursor::load("labels:{$did}"));
+}
+
+Loop::run();
+```
+
 ## Batching and connections
 
 | Option | Default | |

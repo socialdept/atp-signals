@@ -133,18 +133,41 @@ abstract class Stream
      */
     public function start(Closure $cursor): void
     {
-        $this->cursor = $cursor;
-        $this->stopping = false;
-        $this->connect();
+        $this->open($cursor);
         $this->connection->run();
     }
 
-    public function stop(): void
+    /**
+     * Subscribe without running the event loop, so several streams can share
+     * one: open each, then run the loop once.
+     *
+     * @param  Closure(): (int|null)  $cursor  The position to resume from, asked on every connect
+     */
+    public function open(Closure $cursor): void
+    {
+        $this->cursor = $cursor;
+        $this->stopping = false;
+        $this->connect();
+    }
+
+    /**
+     * End this stream, handing over what it gathered, and leave the event
+     * loop running for any others.
+     */
+    public function close(): void
     {
         $this->stopping = true;
         $this->flush();
         $this->cancelTimers();
         $this->connection?->close();
+    }
+
+    /**
+     * End this stream and stop the event loop.
+     */
+    public function stop(): void
+    {
+        $this->close();
         $this->connection?->stop();
     }
 

@@ -53,6 +53,11 @@ class LabelStreamTest extends TestCase
 
                     return resolve(null);
                 }
+
+                public function close(int $code = 1000, string $reason = ''): void
+                {
+                    ($this->onClose)($code, $reason);
+                }
             };
         };
 
@@ -115,5 +120,36 @@ class LabelStreamTest extends TestCase
 
         $this->assertSame([['OutdatedCursor', 'too old']], $info);
         $this->assertSame('Labeler error FutureCursor: ahead', $errors[0]);
+    }
+
+    #[Test]
+    public function several_streams_share_one_loop_and_close_on_their_own(): void
+    {
+        $loop = Factory::create();
+        $urls = [];
+        $seen = ['a' => [], 'b' => []];
+        $a = $this->stream($loop, $urls)->onBatch(function (array $labels, ?int $seq) use (&$seen) {
+            $seen['a'][] = $seq;
+        });
+        $b = $this->stream($loop, $urls)->onBatch(function (array $labels, ?int $seq) use (&$seen) {
+            $seen['b'][] = $seq;
+        });
+
+        $a->open(fn () => 1);
+        $b->open(fn () => 2);
+        $loop->futureTick(function () use ($a, $b) {
+            $a->receive($this->labels(10, 3));
+            $b->receive($this->labels(20, 3));
+            $a->close();
+        });
+        $loop->addTimer(0.1, function () use ($b) {
+            $b->receive($this->labels(21, 3));
+        });
+        // Long enough for a reconnect, which waits a second, to show if one happened.
+        $loop->addTimer(1.5, fn () => $loop->stop());
+        $loop->run();
+
+        $this->assertSame(['a' => [10], 'b' => [20, 21]], $seen, 'Closing one left the other running.');
+        $this->assertCount(2, $urls, 'Each opened its own connection, and the closed one did not reconnect.');
     }
 }
