@@ -1,6 +1,6 @@
-# Real-World Examples
+# Examples
 
-Learn from production-ready Signal examples covering common use cases.
+Part of the [atp-signals docs](introduction.md#documentation). Signals for common jobs, from analytics and moderation to search indexing and a custom AppView.
 
 ## Social Media Analytics
 
@@ -15,6 +15,7 @@ use App\Models\EngagementMetric;
 use SocialDept\AtpSignals\Enums\SignalCommitOperation;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Signals\Signal;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class EngagementTrackerSignal extends Signal
@@ -47,25 +48,19 @@ class EngagementTrackerSignal extends Signal
     public function handle(SignalEvent $event): void
     {
         $collection = $event->getCollection();
-        $timestamp = $event->getTimestamp();
+        $timestamp = Carbon::createFromTimestampMs(intdiv($event->timeUs, 1000));
 
-        // Increment counter for this hour
-        DB::table('engagement_metrics')
-            ->updateOrInsert(
-                [
-                    'collection' => $collection,
-                    'hour' => $timestamp->startOfHour(),
-                ],
-                [
-                    'count' => DB::raw('count + 1'),
-                    'updated_at' => now(),
-                ]
-            );
+        // Increment the counter for this hour
+        DB::table('engagement_metrics')->upsert(
+            [['collection' => $collection, 'hour' => $timestamp->startOfHour(), 'count' => 1, 'updated_at' => now()]],
+            ['collection', 'hour'],
+            ['count' => DB::raw('engagement_metrics.count + 1'), 'updated_at' => now()],
+        );
     }
 }
 ```
 
-**Use case:** Build analytics dashboards showing posts/hour, likes/hour, follows/hour.
+**Use case:** Analytics dashboards showing posts, likes, reposts and follows per hour.
 
 ## Content Moderation
 
@@ -78,6 +73,7 @@ namespace App\Signals;
 
 use App\Models\FlaggedPost;
 use App\Services\ModerationService;
+use Illuminate\Support\Facades\Log;
 use SocialDept\AtpSignals\Enums\SignalCommitOperation;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Signals\Signal;
@@ -158,6 +154,7 @@ namespace App\Signals;
 
 use App\Models\Activity;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use SocialDept\AtpSignals\Enums\SignalCommitOperation;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Signals\Signal;
@@ -213,7 +210,7 @@ class ActivityFeedSignal extends Signal
                 'actor_did' => $event->did,
                 'type' => $this->getActivityType($collection),
                 'data' => $event->toArray(),
-                'created_at' => $event->getTimestamp(),
+                'created_at' => Carbon::createFromTimestampMs(intdiv($event->timeUs, 1000)),
             ]);
         }
     }
@@ -277,11 +274,10 @@ class MentionNotificationSignal extends Signal
             return;
         }
 
-        // Extract mentions from facets
+        // Extract mentions from facets. Nested record values are arrays.
         $mentions = collect($record->facets)
-            ->filter(fn($facet) => isset($facet->features))
-            ->flatMap(fn($facet) => $facet->features)
-            ->filter(fn($feature) => $feature->{'$type'} === 'app.bsky.richtext.facet#mention')
+            ->flatMap(fn (array $facet) => $facet['features'] ?? [])
+            ->filter(fn (array $feature) => ($feature['$type'] ?? null) === 'app.bsky.richtext.facet#mention')
             ->pluck('did')
             ->unique();
 
@@ -360,6 +356,7 @@ class FollowTrackerSignal extends Signal
         Follow::create([
             'follower_did' => $event->did,
             'following_did' => $record->subject,
+            'rkey' => $event->commit->rkey,
             'created_at' => $record->createdAt ?? now(),
         ]);
 
@@ -392,7 +389,6 @@ Index posts for full-text search.
 namespace App\Signals;
 
 use App\Models\Post;
-use Laravel\Scout\Searchable;
 use SocialDept\AtpSignals\Enums\SignalCommitOperation;
 use SocialDept\AtpSignals\Events\SignalEvent;
 use SocialDept\AtpSignals\Signals\Signal;
@@ -446,7 +442,7 @@ class SearchIndexerSignal extends Signal
             ]
         );
 
-        // Scout automatically indexes
+        // With Laravel Scout's Searchable trait on the model
         $post->searchable();
     }
 
@@ -523,12 +519,9 @@ class TrendDetectionSignal extends Signal
     {
         $key = "trending:hashtag:{$hashtag}";
 
-        // Increment counter (expires after 1 hour)
-        $count = Cache::increment($key, 1);
-
-        if (!Cache::has($key)) {
-            Cache::put($key, 1, now()->addHour());
-        }
+        // Start the counter with a one hour expiry, then increment it
+        Cache::add($key, 0, now()->addHour());
+        $count = Cache::increment($key);
 
         // Update trending topics if threshold reached
         if ($count > 100) {
@@ -541,7 +534,7 @@ class TrendDetectionSignal extends Signal
 }
 ```
 
-**Use case:** Identify trending hashtags and topics in real-time.
+**Use case:** Identify trending hashtags as they happen.
 
 ## Custom AppView
 
@@ -567,8 +560,8 @@ class PublicationIndexerSignal extends Signal
     public function collections(): ?array
     {
         return [
-            'app.offprint.beta.publication',
-            'app.offprint.beta.post',
+            'com.example.publication',
+            'com.example.post',
         ];
     }
 
@@ -582,7 +575,7 @@ class PublicationIndexerSignal extends Signal
         $collection = $event->getCollection();
         $operation = $event->getOperation();
 
-        if ($collection === 'app.offprint.beta.publication') {
+        if ($collection === 'com.example.publication') {
             $this->handlePublication($event, $operation);
         } else {
             $this->handlePost($event, $operation);
@@ -669,7 +662,7 @@ class APIIntegrationSignal extends Signal
                 $this->api->sendPost([
                     'author' => $event->did,
                     'text' => $record->text ?? '',
-                    'timestamp' => $event->getTimestamp(),
+                    'time_us' => $event->timeUs,
                 ]);
             }
         );
@@ -746,33 +739,11 @@ class UserMetricsSignal extends Signal
 
 ## Performance Tips
 
-### Batch Database Operations
-
-```php
-public function handle(SignalEvent $event): void
-{
-    // Bad - individual inserts
-    Post::create([...]);
-
-    // Good - batch inserts
-    $posts = Cache::get('pending_posts', []);
-    $posts[] = [...];
-
-    if (count($posts) >= 100) {
-        Post::insert($posts);
-        Cache::forget('pending_posts');
-    } else {
-        Cache::put('pending_posts', $posts, now()->addMinutes(5));
-    }
-}
-```
-
 ### Use Queues for Heavy Operations
 
 ```php
 public function shouldQueue(): bool
 {
-    // Queue if operation takes > 100ms
     return true;
 }
 ```
@@ -789,7 +760,7 @@ Schema::table('posts', function (Blueprint $table) {
 
 ## Next Steps
 
-- **[Review signal architecture →](signals.md)** - Understand Signal structure
-- **[Learn about filtering →](filtering.md)** - Master event filtering
-- **[Explore queue integration →](queues.md)** - Build high-performance Signals
-- **[Configure your setup →](configuration.md)** - Optimize configuration
+- **[Creating Signals](signals/signals.md)**: The Signal class and its methods.
+- **[Filtering](signals/filtering.md)**: Every way to narrow the events a Signal handles.
+- **[Queues](signals/queues.md)**: Handling events on a queue.
+- **[Configuration](getting-started/configuration.md)**: Every option.

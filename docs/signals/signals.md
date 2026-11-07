@@ -1,6 +1,6 @@
 # Creating Signals
 
-Signals are the heart of the Signal package. They define how your application responds to AT Protocol events.
+Part of the [atp-signals docs](../introduction.md#documentation). The Signal class, the events it receives and the methods it can override.
 
 ## What is a Signal?
 
@@ -8,13 +8,13 @@ A **Signal** is a PHP class that:
 
 1. Listens for specific types of AT Protocol events
 2. Filters those events based on your criteria
-3. Executes custom logic when matching events arrive
+3. Runs your logic when a matching event arrives
 
-Think of Signals like Laravel event listeners, but specifically designed for the AT Protocol.
+Signals work like Laravel event listeners for AT Protocol events.
 
 ## Basic Signal Structure
 
-Every Signal extends the base `Signal` class:
+Every Signal extends the abstract `SocialDept\AtpSignals\Signals\Signal` class:
 
 ```php
 <?php
@@ -46,13 +46,13 @@ class MySignal extends Signal
 }
 ```
 
-Only two methods are required:
-- `eventTypes()` - Which event types to listen for
-- `handle()` - What to do when events arrive
+Only two methods are abstract and must be implemented:
+- `eventTypes()`: which event types to listen for
+- `handle()`: what to do when a matching event arrives
 
 ## Creating Signals
 
-### Using Artisan (Recommended)
+### Using Artisan
 
 Generate a new Signal with the make command:
 
@@ -60,11 +60,11 @@ Generate a new Signal with the make command:
 php artisan make:signal MySignal
 ```
 
-This creates `app/Signals/MySignal.php` with a basic template.
+This creates `app/Signals/MySignal.php` from the package stub. The generated class has `eventTypes()`, `collections()`, `handle()`, `shouldHandle()` and `shouldQueue()` methods. Without options, `eventTypes()` returns `['commit']` and `collections()` returns `['app.bsky.feed.post']`.
 
 #### With Options
 
-Generate a Signal with pre-configured filters:
+Set the event type and collection with `--type` (`-t`) and `--collection` (`-c`):
 
 ```bash
 # Create a Signal for posts only
@@ -74,9 +74,11 @@ php artisan make:signal PostSignal --type=commit --collection=app.bsky.feed.post
 php artisan make:signal FollowSignal --type=commit --collection=app.bsky.graph.follow
 ```
 
+The stub always writes a `collections()` method. For an `identity` or `account` Signal the collection filter is ignored, but you can delete the method.
+
 ### Manual Creation
 
-You can also create Signals manually in `app/Signals/`:
+You can also create Signals by hand in `app/Signals/`:
 
 ```php
 <?php
@@ -100,11 +102,11 @@ class ManualSignal extends Signal
 }
 ```
 
-Signals are automatically discovered from `app/Signals/` - no registration needed.
+Signals in `app/Signals/` are discovered automatically, so no registration is needed.
 
 ## Event Types
 
-Signals can listen for three types of AT Protocol events:
+Signals can listen for four event types, defined by the `SocialDept\AtpSignals\Enums\SignalEventType` enum. You can return enum cases or their string values.
 
 ### Commit Events
 
@@ -125,11 +127,9 @@ public function eventTypes(): array
 - Updating profile information
 - Deleting content
 
-This is the most common event type and what you'll use 99% of the time.
-
 ### Identity Events
 
-Identity changes track handle updates:
+Identity events report changes to an account's identity, such as a handle change:
 
 ```php
 public function eventTypes(): array
@@ -142,11 +142,10 @@ public function eventTypes(): array
 **Use cases:**
 - Tracking handle changes
 - Updating local user records
-- Monitoring account migrations
 
 ### Account Events
 
-Account status changes track account state:
+Account events report changes to an account's status:
 
 ```php
 public function eventTypes(): array
@@ -159,7 +158,18 @@ public function eventTypes(): array
 **Use cases:**
 - Detecting account deactivation
 - Monitoring account status
-- Compliance tracking
+
+### Sync Events
+
+Sync events are only emitted by Jetstream v2. A sync event marks a repo divergence: the account's records can no longer be folded from the event stream alone and should be re-fetched from its PDS.
+
+```php
+public function eventTypes(): array
+{
+    return [SignalEventType::Sync];
+    // Or: return ['sync'];
+}
+```
 
 ### Multiple Event Types
 
@@ -188,7 +198,7 @@ public function handle(SignalEvent $event): void
 
 ## The SignalEvent Object
 
-The `SignalEvent` object contains all event data:
+Every handler receives a `SocialDept\AtpSignals\Events\SignalEvent`.
 
 ### Common Properties
 
@@ -198,20 +208,26 @@ public function handle(SignalEvent $event): void
     // User's DID (decentralized identifier)
     $did = $event->did; // "did:plc:z72i7hdynmk6r22z27h6tvur"
 
-    // Event type (commit, identity, account, sync)
+    // Event type: "commit", "identity", "account" or "sync"
     $kind = $event->kind;
 
-    // Timestamp in microseconds
+    // Event time in microseconds
     $timestamp = $event->timeUs;
-
-    // Convert to Carbon instance
-    $date = $event->getTimestamp();
 }
 ```
 
+`timeUs` is a microsecond timestamp on Jetstream and Obelisk events. In firehose mode the consumer stores the firehose sequence number in `timeUs` instead, so do not read it as a time there.
+
+A few properties are only set by some sources:
+
+- `backfill` (`?bool`): set on Obelisk events, `null` on Jetstream and firehose
+- `cursor` (`?string`): the Obelisk event id, `null` on Jetstream and firehose
+- `seq` (`?int`): the Jetstream v2 cursor, `null` on other sources
+- `sync` (`?SyncEvent`): the payload of a sync event (Jetstream v2 only)
+
 ### Commit Events
 
-For commit events, access the `commit` property:
+For commit events, the `commit` property holds a `SocialDept\AtpSignals\Events\CommitEvent`:
 
 ```php
 public function handle(SignalEvent $event): void
@@ -221,17 +237,20 @@ public function handle(SignalEvent $event): void
         $collection = $event->commit->collection;
         // Or: $collection = $event->getCollection();
 
-        // Operation (create, update, delete)
+        // Operation, a SignalCommitOperation enum (Create, Update, Delete)
         $operation = $event->commit->operation;
         // Or: $operation = $event->getOperation();
 
-        // Record key (unique identifier)
+        // Record key
         $rkey = $event->commit->rkey;
 
         // Revision
         $rev = $event->commit->rev;
 
-        // The actual record data
+        // Record CID (may be null)
+        $cid = $event->commit->cid;
+
+        // The record data (null for deletes)
         $record = $event->commit->record;
         // Or: $record = $event->getRecord();
     }
@@ -250,28 +269,25 @@ public function handle(SignalEvent $event): void
     // For posts (app.bsky.feed.post)
     $text = $record->text ?? null;
     $createdAt = $record->createdAt ?? null;
-    $embed = $record->embed ?? null;
-    $facets = $record->facets ?? null;
+    $embed = $record->embed ?? null;   // array
+    $facets = $record->facets ?? null; // array
 
-    // For likes (app.bsky.feed.like)
-    $subject = $record->subject ?? null;
-
-    // For follows (app.bsky.graph.follow)
+    // For likes (app.bsky.feed.like) and follows (app.bsky.graph.follow)
     $subject = $record->subject ?? null;
 }
 ```
 
-Records are `stdClass` objects, so use null coalescing (`??`) for safety.
+A record is a `stdClass` object at the top level only. Nested values such as `embed`, `facets` and a like's `subject` are plain arrays, so read them with array syntax (`$record->subject['uri']`). Fields can be missing, so use null coalescing (`??`).
 
 ### Identity Events
 
-For identity events, access the `identity` property:
+For identity events, the `identity` property holds a `SocialDept\AtpSignals\Events\IdentityEvent`:
 
 ```php
 public function handle(SignalEvent $event): void
 {
     if ($event->isIdentity()) {
-        // New handle
+        // Handle (may be null)
         $handle = $event->identity->handle;
 
         // User's DID
@@ -280,7 +296,7 @@ public function handle(SignalEvent $event): void
         // Sequence number
         $seq = $event->identity->seq;
 
-        // Timestamp
+        // Timestamp string (may be null)
         $time = $event->identity->time;
     }
 }
@@ -288,17 +304,17 @@ public function handle(SignalEvent $event): void
 
 ### Account Events
 
-For account events, access the `account` property:
+For account events, the `account` property holds a `SocialDept\AtpSignals\Events\AccountEvent`:
 
 ```php
 public function handle(SignalEvent $event): void
 {
     if ($event->isAccount()) {
-        // Account status
+        // Whether the account is active
         $active = $event->account->active; // true/false
 
-        // Status reason
-        $status = $event->account->status ?? null;
+        // Status reason (may be null)
+        $status = $event->account->status;
 
         // User's DID
         $did = $event->did;
@@ -306,22 +322,35 @@ public function handle(SignalEvent $event): void
         // Sequence number
         $seq = $event->account->seq;
 
-        // Timestamp
+        // Timestamp string (may be null)
         $time = $event->account->time;
+    }
+}
+```
+
+### Sync Events
+
+For sync events, the `sync` property holds a `SocialDept\AtpSignals\Events\SyncEvent` with `did`, `rev`, `seq` and `time`:
+
+```php
+public function handle(SignalEvent $event): void
+{
+    if ($event->isSync()) {
+        $did = $event->sync->did;
+        $rev = $event->sync->rev; // may be null
     }
 }
 ```
 
 ## Helper Methods
 
-Signals provide several helper methods for common tasks:
+`SignalEvent` and `CommitEvent` provide a few helpers.
 
 ### Type Checking
 
 ```php
 public function handle(SignalEvent $event): void
 {
-    // Check event type
     if ($event->isCommit()) {
         //
     }
@@ -331,6 +360,10 @@ public function handle(SignalEvent $event): void
     }
 
     if ($event->isAccount()) {
+        //
+    }
+
+    if ($event->isSync()) {
         //
     }
 }
@@ -370,17 +403,14 @@ public function handle(SignalEvent $event): void
 ```php
 public function handle(SignalEvent $event): void
 {
-    // Get collection (commit events only)
+    // Get collection (null for non-commit events)
     $collection = $event->getCollection();
 
-    // Get operation (commit events only)
+    // Get operation (null for non-commit events)
     $operation = $event->getOperation();
 
-    // Get record (commit events only)
+    // Get record (null for non-commit events and deletes)
     $record = $event->getRecord();
-
-    // Get timestamp as Carbon
-    $timestamp = $event->getTimestamp();
 
     // Convert to array
     $array = $event->toArray();
@@ -389,11 +419,11 @@ public function handle(SignalEvent $event): void
 
 ## Optional Signal Methods
 
-Signals support several optional methods for advanced behavior:
+The base class provides defaults for these methods, so override only the ones you need.
 
 ### Collections Filter
 
-Filter by AT Protocol collections:
+Filter by AT Protocol collections (commit events only):
 
 ```php
 public function collections(): ?array
@@ -402,9 +432,9 @@ public function collections(): ?array
 }
 ```
 
-Return `null` to handle all collections.
+Return `null` (the default) to handle all collections.
 
-[Learn more about collection filtering →](filtering.md)
+[Learn more about collection filtering](filtering.md#collection-filtering)
 
 ### Operations Filter
 
@@ -417,9 +447,9 @@ public function operations(): ?array
 }
 ```
 
-Return `null` to handle all operations.
+Return `null` (the default) to handle all operations.
 
-[Learn more about operation filtering →](filtering.md)
+[Learn more about operation filtering](filtering.md#operation-filtering)
 
 ### DIDs Filter
 
@@ -434,18 +464,18 @@ public function dids(): ?array
 }
 ```
 
-Return `null` to handle all users.
+Return `null` (the default) to handle all users.
 
-[Learn more about DID filtering →](filtering.md)
+[Learn more about DID filtering](filtering.md#did-filtering)
 
 ### Custom Filtering
 
-Add complex filtering logic:
+Add your own filtering logic. The default returns `true`.
 
 ```php
 public function shouldHandle(SignalEvent $event): bool
 {
-    // Only handle posts with images
+    // Only handle posts with an embed
     if ($event->isCommit() && $event->getCollection() === 'app.bsky.feed.post') {
         $record = $event->getRecord();
         return isset($record->embed);
@@ -457,7 +487,7 @@ public function shouldHandle(SignalEvent $event): bool
 
 ### Queue Configuration
 
-Process events asynchronously:
+Process events on a queue:
 
 ```php
 public function shouldQueue(): bool
@@ -476,7 +506,9 @@ public function queueConnection(): string
 }
 ```
 
-[Learn more about queue integration →](queues.md)
+By default `queue()` returns `config('atp-signals.queue.queue')` (env `SIGNAL_QUEUE`, default `signal`) and `queueConnection()` returns `config('atp-signals.queue.connection')` (env `SIGNAL_QUEUE_CONNECTION`, default `null`, the app's default connection).
+
+[Learn more about queue integration](queues.md)
 
 ### Failure Handling
 
@@ -493,56 +525,65 @@ public function failed(SignalEvent $event, \Throwable $exception): void
 }
 ```
 
+The default implementation does nothing.
+
 ## Signal Lifecycle
 
-Understanding the Signal lifecycle helps you write better Signals:
+For each event, the dispatcher finds the matching Signals and then runs each one.
 
 ### 1. Event Arrives
 
-An event arrives from the AT Protocol (via Jetstream, Firehose, or an Obelisk archive).
+An event arrives from Jetstream, the firehose or Obelisk.
 
 ### 2. Event Type Matching
 
-Signal checks if the event type matches your `eventTypes()` definition.
+The event's `kind` must be one of the values in `eventTypes()`.
 
 ### 3. Collection Filtering
 
-If defined, Signal checks if the collection matches your `collections()` definition.
+If `collections()` is not `null` and the event is a commit, the collection must match one of the patterns.
 
 ### 4. Operation Filtering
 
-If defined, Signal checks if the operation matches your `operations()` definition.
+If `operations()` is not `null` and the event is a commit, the operation must be one of the listed operations.
 
 ### 5. DID Filtering
 
-If defined, Signal checks if the DID matches your `dids()` definition.
+If `dids()` is not `null`, the event's DID must be in the list. This applies to every event type.
 
 ### 6. Custom Filtering
 
-If defined, Signal calls your `shouldHandle()` method.
+`shouldHandle()` must return `true`.
 
 ### 7. Queue Decision
 
-Signal checks `shouldQueue()` to determine if the event should be queued.
+If `shouldQueue()` returns `true`, the Signal and event are dispatched as a `ProcessSignalJob` on the Signal's `queueConnection()` and `queue()`. Otherwise the Signal runs in the consumer process.
+
+Steps 2 to 6 always run in the consumer process, including for queued Signals.
 
 ### 8. Handler Execution
 
-Your `handle()` method is called (either synchronously or via queue).
+`handle()` is called, either right away or by a queue worker.
 
-### 9. Failure Handling (if applicable)
+### 9. Failure Handling
 
-If an exception occurs, your `failed()` method is called (if defined).
+If a synchronous `handle()` throws, the dispatcher logs the error and calls `failed()`, then moves on to the next Signal. The consumer keeps running. For a queued Signal, the job calls `failed()` when Laravel marks the job as failed.
 
 ## Best Practices
 
 ### Keep Handlers Focused
 
-Each Signal should do one thing well:
+Give each Signal one job:
 
 ```php
-// Good - focused on one task
+// Good: focused on one task
 class TrackNewPostsSignal extends Signal
 {
+    public function eventTypes(): array
+    {
+        return ['commit'];
+    }
+
     public function collections(): ?array
     {
         return ['app.bsky.feed.post'];
@@ -554,9 +595,14 @@ class TrackNewPostsSignal extends Signal
     }
 }
 
-// Less ideal - doing too much
+// Less ideal: doing too much
 class MonitorEverythingSignal extends Signal
 {
+    public function eventTypes(): array
+    {
+        return ['commit'];
+    }
+
     public function handle(SignalEvent $event): void
     {
         $this->storePost($event);
@@ -569,11 +615,16 @@ class MonitorEverythingSignal extends Signal
 
 ### Use Queues for Heavy Work
 
-Don't block the consumer with expensive operations:
+Synchronous Signals run inside the consumer loop, so slow work holds up every event behind it:
 
 ```php
 class AnalyzePostSignal extends Signal
 {
+    public function eventTypes(): array
+    {
+        return ['commit'];
+    }
+
     public function shouldQueue(): bool
     {
         return true; // Process in background
@@ -586,7 +637,7 @@ class AnalyzePostSignal extends Signal
 }
 ```
 
-### Validate Data Safely
+### Check Data Before Using It
 
 Records can have missing or unexpected data:
 
@@ -598,12 +649,11 @@ public function handle(SignalEvent $event): void
     // Use null coalescing
     $text = $record->text ?? '';
 
-    // Validate before processing
+    // Check before processing
     if (empty($text)) {
         return;
     }
 
-    // Safe to process
     $this->processText($text);
 }
 ```
@@ -618,16 +668,18 @@ public function handle(SignalEvent $event): void
     Log::debug('Processing event', [
         'signal' => static::class,
         'collection' => $event->getCollection(),
-        'operation' => $event->getOperation()->value,
+        'operation' => $event->getOperation()?->value,
     ]);
 
     // Your logic
 }
 ```
 
-### Handle Failures Gracefully
+Set `SIGNAL_DEBUG=true` to have the dispatcher log every dispatch (Signal, kind, collection, operation, DID and whether it was queued).
 
-Always implement failure handling for queued Signals:
+### Handle Failures
+
+Implement `failed()` for queued Signals, since the consumer never sees their exceptions:
 
 ```php
 public function failed(SignalEvent $event, \Throwable $exception): void
@@ -639,14 +691,14 @@ public function failed(SignalEvent $event, \Throwable $exception): void
         'trace' => $exception->getTraceAsString(),
     ]);
 
-    // Optionally: send to error tracking service
+    // Optionally: send to your error tracker
     // report($exception);
 }
 ```
 
 ## Auto-Discovery
 
-Signals are automatically discovered from `app/Signals/` by default. You can customize discovery in `config/signal.php`:
+Signals are discovered from `app/Signals/` by default. You can change discovery in `config/atp-signals.php`:
 
 ```php
 'auto_discovery' => [
@@ -656,9 +708,11 @@ Signals are automatically discovered from `app/Signals/` by default. You can cus
 ],
 ```
 
+Discovery scans the folder recursively, but it builds each class name as the namespace plus the file name. A Signal in a subfolder, with a sub-namespace, is not found. Register it manually instead.
+
 ### Manual Registration
 
-Disable auto-discovery and register Signals manually:
+List Signals in the `signals` key. To use only that list, disable auto-discovery:
 
 ```php
 'auto_discovery' => [
@@ -671,15 +725,17 @@ Disable auto-discovery and register Signals manually:
 ],
 ```
 
+Every class must extend `SocialDept\AtpSignals\Signals\Signal`, or registration throws an `InvalidArgumentException`. Do not list a Signal in `signals` that auto-discovery also finds, or it is registered twice.
+
 ## Testing Signals
 
-Test your Signals before deploying:
+Run a Signal against a sample event:
 
 ```bash
 php artisan signal:test MySignal
 ```
 
-[Learn more about testing →](testing.md)
+[Learn more about testing](testing.md)
 
 ## Listing Signals
 
@@ -689,14 +745,15 @@ View all registered Signals:
 php artisan signal:list
 ```
 
-This displays:
-- Signal class names
-- Event types they listen for
-- Collection filters (if any)
-- Queue configuration
+For each Signal this shows:
+- The short and full class name
+- The event types it listens for
+- Its collection filter, or "All collections"
+- Its DID filter, if any
+- Its queue name, if it is queued
 
 ## Next Steps
 
-- **[Learn about filtering →](filtering.md)** - Master collection patterns and wildcards
-- **[Understand queue integration →](queues.md)** - Build high-performance processors
-- **[See real-world examples →](examples.md)** - Learn from production use cases
+- **[Learn about filtering](filtering.md)**: collection patterns and wildcards
+- **[Understand queue integration](queues.md)**: running Signals on a queue
+- **[See examples](../examples.md)**: complete Signals for common tasks

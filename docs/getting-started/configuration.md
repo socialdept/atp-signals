@@ -1,110 +1,81 @@
 # Configuration
 
-Signal's configuration file provides complete control over how your application consumes AT Protocol events.
+Part of the [atp-signals docs](../introduction.md#documentation). Every option in `config/atp-signals.php` and the environment variables behind them.
 
 ## Configuration File
 
-After installation, configuration lives in `config/signal.php`.
-
-### Publishing Configuration
-
-Publish the config file manually if needed:
+The configuration lives in `config/atp-signals.php` and is read under the `atp-signals.*` key. `php artisan signal:install` publishes it for you. To publish it on its own:
 
 ```bash
-php artisan vendor:publish --tag=signal-config
+php artisan vendor:publish --tag=atp-signals-config
 ```
 
-This creates `config/signal.php` with all available options.
+The package merges its defaults, so you only need to publish the file to change options that have no environment variable.
 
 ## Environment Variables
 
-Most configuration can be set via `.env` for environment-specific values.
+| Variable | Config key | Default |
+|---|---|---|
+| `SIGNAL_MODE` | `mode` | `jetstream` |
+| `SIGNAL_JETSTREAM_URL` | `websocket_url` | `wss://jetstream2.us-east.bsky.network` |
+| `SIGNAL_JETSTREAM_VERSION` | `jetstream_version` | `1` |
+| `SIGNAL_JETSTREAM_V2_URL` | `websocket_url_v2` | `wss://jetstream.us-west.bsky.network` |
+| `SIGNAL_FIREHOSE_HOST` | `firehose.host` | `bsky.network` |
+| `OBELISK_ENABLED` | `obelisk.enabled` | `false` |
+| `OBELISK_URL` | `obelisk.base_url` | `http://localhost:6060` |
+| `OBELISK_TOKEN` | `obelisk.token` | none |
+| `OBELISK_TIMEOUT` | `obelisk.timeout` | `30` |
+| `OBELISK_WEBHOOK_PATH` | `obelisk.webhook_path` | `/_atp/obelisk/webhook` |
+| `OBELISK_WEBHOOK_SECRET` | `obelisk.webhook_secret` | none |
+| `OBELISK_VERIFY_SIGNATURE` | `obelisk.verify_signature` | `true` |
+| `OBELISK_QUEUE_EVENTS` | `obelisk.queue_events` | `true` |
+| `OBELISK_QUEUE_CONNECTION` | `obelisk.queue_connection` | default connection |
+| `OBELISK_QUEUE` | `obelisk.queue_name` | `obelisk` |
+| `OBELISK_MAX_QUEUE_DEPTH` | `obelisk.max_queue_depth` | `100` |
+| `OBELISK_PULL_LIMIT` | `obelisk.pull.limit` | `200` |
+| `OBELISK_PULL_POLL_INTERVAL` | `obelisk.pull.poll_interval` | `5` |
+| `OBELISK_PULL_COLLECTION` | `obelisk.pull.collection` | none |
+| `SIGNAL_CURSOR_STORAGE` | `cursor_storage` | `database` |
+| `SIGNAL_QUEUE_CONNECTION` | `queue.connection` | default connection |
+| `SIGNAL_QUEUE` | `queue.queue` | `signal` |
+| `SIGNAL_IDLE_TIMEOUT` | `connection.idle_timeout` | `60` |
+| `SIGNAL_DEBUG` | `debug` | `false` |
 
-### Basic Configuration
-
-```env
-# Consumer Mode (jetstream or firehose)
-SIGNAL_MODE=jetstream
-
-# Jetstream Configuration
-SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
-
-# Firehose Configuration
-SIGNAL_FIREHOSE_HOST=bsky.network
-
-# Obelisk Configuration (optional, archive-backed delivery)
-OBELISK_ENABLED=false
-OBELISK_URL=http://localhost:6060
-OBELISK_TOKEN=
-OBELISK_WEBHOOK_SECRET=
-
-# Cursor Storage (database, redis, or file)
-SIGNAL_CURSOR_STORAGE=database
-
-# Queue Configuration
-SIGNAL_QUEUE_CONNECTION=redis
-SIGNAL_QUEUE=signal
-```
-
-## Consumer Mode
-
-Choose between Jetstream and Firehose mode.
-
-### Configuration
+## Mode
 
 ```php
 'mode' => env('SIGNAL_MODE', 'jetstream'),
 ```
 
-**Options:**
-- `jetstream` - JSON events, server-side filtering (default)
-- `firehose` - CBOR/CAR events, client-side filtering
+Where `signal:consume` reads events from:
 
-**Environment Variable:**
-```env
-SIGNAL_MODE=jetstream
-```
+- `jetstream`: JSON events, with collections filtered on the server (default)
+- `firehose`: the raw CBOR/CAR repo stream, filtered on the client
+- `obelisk`: polls an Obelisk archive's event log. Webhook delivery from Obelisk works whatever the mode is
 
-**When to use each:**
-- **Jetstream**: Most applications, production efficiency
-- **Firehose**: Raw CBOR/CAR access, comprehensive indexing
+`signal:consume --mode=` overrides this for one run. Any other value makes the command exit with `Invalid mode`.
 
-[Learn more about modes →](modes.md)
+[Learn more about modes](../sources/modes.md)
 
-## Jetstream Configuration
-
-Configuration specific to Jetstream mode.
-
-### WebSocket URL
+## Jetstream
 
 ```php
-'jetstream' => [
-    'websocket_url' => env(
-        'SIGNAL_JETSTREAM_URL',
-        'wss://jetstream2.us-east.bsky.network'
-    ),
-],
+'websocket_url' => env('SIGNAL_JETSTREAM_URL', 'wss://jetstream2.us-east.bsky.network'),
+
+'jetstream_version' => (int) env('SIGNAL_JETSTREAM_VERSION', 1),
+
+'websocket_url_v2' => env('SIGNAL_JETSTREAM_V2_URL', 'wss://jetstream.us-west.bsky.network'),
 ```
 
-**Available Endpoints:**
+- `websocket_url`: the Jetstream v1 endpoint. The consumer appends `/subscribe` and one `wantedCollections` parameter per collection your Signals ask for. The config file lists `wss://jetstream2.us-east.bsky.network` (US East) and `wss://jetstream1.us-west.bsky.network` (US West)
+- `jetstream_version`: `1` speaks the legacy wire (`/subscribe`, `time_us` cursors). `2` speaks `subscribeEvents` with `collections` and `kinds` filters, `seq` cursors, `sync` events, and surfaces `OutdatedCursor` advisories as the `SocialDept\AtpSignals\Events\CursorOutdated` Laravel event
+- `websocket_url_v2`: the endpoint used when `jetstream_version` is `2`. The consumer appends `/xrpc/network.bsky.jetstream.subscribeEvents`
 
-**US East (Default):**
-```env
-SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
-```
+A v2 cursor is stored under its own `jetstream-v2` key. A fresh v2 consumer with no stored position starts from the v1 cursor when one exists.
 
-**US West:**
-```env
-SIGNAL_JETSTREAM_URL=wss://jetstream1.us-west.bsky.network
-```
+If any registered Signal returns `null` from `collections()`, no collection filter is sent and the server delivers every collection.
 
-Choose the endpoint closest to your server for best latency.
-
-## Firehose Configuration
-
-Configuration specific to Firehose mode.
-
-### Host
+## Firehose
 
 ```php
 'firehose' => [
@@ -112,28 +83,17 @@ Configuration specific to Firehose mode.
 ],
 ```
 
-The WebSocket URL is constructed as:
+The consumer connects to:
+
 ```
 wss://{host}/xrpc/com.atproto.sync.subscribeRepos
 ```
 
-**Environment Variable:**
-```env
-SIGNAL_FIREHOSE_HOST=bsky.network
-```
+The firehose has no server-side filtering, so every event arrives and Signals filter on the client. Point `host` at another relay or a PDS to read its stream instead.
 
-**Default Host:** `bsky.network`
+## Obelisk
 
-**Custom Hosts:** If you're running your own AT Protocol PDS, specify it here:
-```env
-SIGNAL_FIREHOSE_HOST=my-pds.example.com
-```
-
-## Obelisk Configuration
-
-Obelisk is a self-hostable AT Protocol record archive. Signal consumes its event log by webhook (push) or by polling (pull).
-
-### Enable Obelisk
+Obelisk is a self-hostable AT Protocol record archive. Signal consumes its event log by webhook (push) or by polling (pull), and the two can run together.
 
 ```php
 'obelisk' => [
@@ -148,6 +108,7 @@ Obelisk is a self-hostable AT Protocol record archive. Signal consumes its event
     'queue_events' => env('OBELISK_QUEUE_EVENTS', true),
     'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
     'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
+    'max_queue_depth' => (int) env('OBELISK_MAX_QUEUE_DEPTH', 100),
     'pull' => [
         'limit' => (int) env('OBELISK_PULL_LIMIT', 200),
         'poll_interval' => (int) env('OBELISK_PULL_POLL_INTERVAL', 5),
@@ -156,149 +117,77 @@ Obelisk is a self-hostable AT Protocol record archive. Signal consumes its event
 ],
 ```
 
-**Environment Variables:**
-```env
-OBELISK_ENABLED=true
-OBELISK_URL=http://localhost:6060
-OBELISK_TOKEN=your-archive-bearer-token
-OBELISK_WEBHOOK_SECRET=from-createWebhook
-OBELISK_QUEUE_CONNECTION=redis
-OBELISK_QUEUE=obelisk
-```
-
-**Options:**
-- `enabled`: Register the webhook route (default: `false`). Pull mode does not need it
-- `base_url`: Archive base URL
-- `token`: Bearer token minted by the archive's `create-token` script
+- `enabled`: registers the webhook route (default: `false`). Pull mode does not need it
+- `base_url`: archive base URL
+- `token`: bearer token minted by the archive's `create-token` script
 - `timeout`: HTTP timeout in seconds for archive calls (default: `30`)
-- `webhook_path`: URL path where Obelisk delivers batches
+- `webhook_path`: URL path where Obelisk delivers batches. The route is named `signal.obelisk.webhook`
 - `webhook_secret`: HMAC signing secret, returned once by `createWebhook`
-- `webhook_middleware`: Middleware for the webhook route
-- `verify_signature`: Verify the HMAC signature (default: `true`). Turning this off lets anything that can reach the route inject events
-- `queue_events`: Queue each batch instead of handling it in the request (default: `true`)
-- `queue_connection`: Queue connection for batch jobs (null = default)
-- `queue_name`: Queue name for batch jobs (default: `obelisk`)
-- `pull.limit`: Events per `getEvents` page (default: `200`)
-- `pull.poll_interval`: Seconds to wait once the backlog is drained (default: `5`). A full page never waits
-- `pull.collection`: Optional single-collection filter. Null polls every archived collection and lets each Signal filter
+- `webhook_middleware`: middleware for the webhook route (default: `['api']`)
+- `verify_signature`: verify the HMAC signature (default: `true`). Turning this off lets anything that can reach the route inject events
+- `queue_events`: queue each batch instead of handling it in the request (default: `true`)
+- `queue_connection`: queue connection for batch jobs (null uses the default connection)
+- `queue_name`: queue name for batch jobs (default: `obelisk`)
+- `max_queue_depth`: refuse a delivery with a 503 once this many jobs wait on the batch queue, so the archive backs off and redelivers (default: `100`, `0` disables it). Only applies when `queue_events` is on
+- `pull.limit`: events per `getEvents` page (default: `200`)
+- `pull.poll_interval`: seconds to wait once the backlog is drained (default: `5`). A full page never waits
+- `pull.collection`: optional single-collection filter. Null polls every archived collection and lets each Signal filter
 
-Without a `webhook_secret`, deliveries are rejected rather than trusted.
+With signature verification on and no `webhook_secret`, deliveries are rejected rather than trusted.
 
-[Learn more about Obelisk →](obelisk.md)
+[Learn more about Obelisk](../sources/obelisk.md)
 
 ## Cursor Storage
 
-Configure how Signal stores cursor positions for resuming after disconnections.
-
-### Storage Driver
+The consumers store their position so a restart resumes where the last run stopped.
 
 ```php
 'cursor_storage' => env('SIGNAL_CURSOR_STORAGE', 'database'),
-```
 
-**Available Drivers:**
-- `database` - Store in database (recommended for production)
-- `redis` - Store in Redis (high performance)
-- `file` - Store in filesystem (development only)
-
-**Environment Variable:**
-```env
-SIGNAL_CURSOR_STORAGE=database
-```
-
-### Database Driver
-
-Uses Laravel's default database connection.
-
-**Configuration:**
-```php
-'cursor_storage' => 'database',
-```
-
-**Requires:**
-- Migration published and run
-- Database connection configured
-
-**Table:** `signal_cursors`
-
-### Redis Driver
-
-Stores cursors in Redis for high performance.
-
-**Configuration:**
-```php
-'cursor_storage' => 'redis',
-
-'redis' => [
-    'connection' => env('SIGNAL_REDIS_CONNECTION', 'default'),
-    'key_prefix' => env('SIGNAL_REDIS_PREFIX', 'signal:cursor:'),
+'cursor_config' => [
+    'database' => [
+        'table' => 'signal_cursors',
+        'connection' => null, // null = default connection
+    ],
+    'redis' => [
+        'connection' => 'default',
+        'key' => 'signal:cursor',
+    ],
+    'file' => [
+        'path' => storage_path('signal/cursor.json'),
+    ],
 ],
 ```
 
-**Environment Variables:**
-```env
-SIGNAL_CURSOR_STORAGE=redis
-SIGNAL_REDIS_CONNECTION=default
-SIGNAL_REDIS_PREFIX=signal:cursor:
-```
+Drivers:
 
-**Requires:**
-- Redis connection configured in `config/database.php`
-- Redis server running
+- `database`: one row per consumer in the `signal_cursors` table, created by the package migration (publish tag `signal-migrations`). `connection` picks a database connection. The migration creates `signal_cursors` by name, so if you change `table`, edit the published migration too
+- `redis`: one key per consumer on the given Redis connection
+- `file`: a JSON file per consumer. The directory is created if missing
 
-### File Driver
+Any value other than `redis` or `file` falls back to `database`.
 
-Stores cursors in the filesystem (development only).
+Each consumer keeps its own position under a key:
 
-**Configuration:**
-```php
-'cursor_storage' => 'file',
+| Consumer | Database `key` column | Redis key | File |
+|---|---|---|---|
+| Jetstream v1 and firehose | `jetstream` | `signal:cursor` | `cursor.json` |
+| Jetstream v2 | `jetstream-v2` | `signal:cursor:jetstream-v2` | `cursor-jetstream-v2.json` |
+| Obelisk pull | `obelisk` | `signal:cursor:obelisk` | `cursor-obelisk.json` |
 
-'file' => [
-    'path' => env('SIGNAL_FILE_PATH', storage_path('app/signal')),
-],
-```
+> [!NOTE]
+> Jetstream v1 and the firehose share the default slot, so switching between those two modes resumes from the other mode's cursor. Use `signal:consume --fresh` once after switching.
 
-**Environment Variables:**
-```env
-SIGNAL_CURSOR_STORAGE=file
-SIGNAL_FILE_PATH=/path/to/storage/signal
-```
-
-**Not recommended for production:**
-- Single server only
-- No clustering support
-- Filesystem I/O overhead
-
-## Queue Configuration
-
-Configure how Signal dispatches queued jobs.
-
-### Queue Connection
+## Queue
 
 ```php
 'queue' => [
-    'connection' => env('SIGNAL_QUEUE_CONNECTION', null),
-    'queue' => env('SIGNAL_QUEUE', 'default'),
+    'connection' => env('SIGNAL_QUEUE_CONNECTION'),
+    'queue' => env('SIGNAL_QUEUE', 'signal'),
 ],
 ```
 
-**Environment Variables:**
-```env
-# Queue connection (redis, database, sqs, etc.)
-SIGNAL_QUEUE_CONNECTION=redis
-
-# Queue name
-SIGNAL_QUEUE=signal
-```
-
-**Defaults:**
-- `connection`: Uses Laravel's default queue connection
-- `queue`: Uses Laravel's default queue name
-
-### Per-Signal Configuration
-
-Signals can override queue configuration:
+These are the defaults for Signals whose `shouldQueue()` returns `true`. A null connection uses your default queue connection. A Signal can override both:
 
 ```php
 public function shouldQueue(): bool
@@ -306,26 +195,28 @@ public function shouldQueue(): bool
     return true;
 }
 
-public function queueConnection(): string
+public function queueConnection(): ?string
 {
-    return 'redis'; // Override connection
+    return 'redis';
 }
 
-public function queue(): string
+public function queue(): ?string
 {
-    return 'high-priority'; // Override queue name
+    return 'high-priority';
 }
 ```
 
-[Learn more about queue integration →](queues.md)
+Remember to run a worker for the queue, for example `php artisan queue:work --queue=signal`.
 
-## Auto-Discovery
+[Learn more about queue integration](../signals/queues.md)
 
-Configure automatic Signal discovery.
-
-### Enable/Disable
+## Signals and Auto-Discovery
 
 ```php
+'signals' => [
+    // App\Signals\PostCreateSignal::class,
+],
+
 'auto_discovery' => [
     'enabled' => true,
     'path' => app_path('Signals'),
@@ -333,14 +224,14 @@ Configure automatic Signal discovery.
 ],
 ```
 
-**Options:**
-- `enabled`: Enable/disable auto-discovery (default: `true`)
-- `path`: Directory to scan for Signals (default: `app/Signals`)
-- `namespace`: Namespace for discovered Signals (default: `App\Signals`)
+- `signals`: Signal classes to register explicitly. Each must extend `SocialDept\AtpSignals\Signals\Signal`
+- `auto_discovery.enabled`: scan `path` for Signals (default: `true`)
+- `auto_discovery.path`: directory to scan (default: `app/Signals`)
+- `auto_discovery.namespace`: namespace of the classes in that directory (default: `App\Signals`)
 
-### Disable Auto-Discovery
+Discovery builds each class name as `namespace` plus the file name, so only files directly in `path` are found. Register a Signal that lives in a subdirectory in `signals`.
 
-Manually register Signals instead:
+To turn discovery off and list Signals by hand:
 
 ```php
 'auto_discovery' => [
@@ -353,427 +244,65 @@ Manually register Signals instead:
 ],
 ```
 
-### Custom Discovery Path
+`php artisan signal:list` shows what is registered.
 
-Organize Signals in a custom directory:
+## Connection
 
 ```php
-'auto_discovery' => [
-    'enabled' => true,
-    'path' => app_path('Domain/Signals'),
-    'namespace' => 'App\\Domain\\Signals',
+'connection' => [
+    'reconnect_attempts' => 5,
+    'reconnect_delay' => 5,
+    'max_reconnect_delay' => 60,
+    'timeout' => 60,
+    'idle_timeout' => (int) env('SIGNAL_IDLE_TIMEOUT', 60),
 ],
 ```
 
-## Manual Signal Registration
+- `reconnect_attempts`: how many times the Jetstream and firehose consumers reconnect after the socket closes before giving up and failing the command. The count resets on a successful connection
+- `reconnect_delay`: base delay in seconds. Each attempt doubles it (5, 10, 20, ...)
+- `max_reconnect_delay`: cap on that delay in seconds. The Obelisk pull consumer also uses `reconnect_delay` and `max_reconnect_delay` to back off when the archive is unreachable
+- `idle_timeout`: Jetstream only. Reconnect when no message arrives for this many seconds, which catches dead connections the socket never reports closed. `0` disables it
+- `timeout`: present in the config but not read by the package
 
-Register Signals explicitly.
-
-### Configuration
-
-```php
-'signals' => [
-    \App\Signals\NewPostSignal::class,
-    \App\Signals\NewFollowSignal::class,
-    \App\Signals\ProfileUpdateSignal::class,
-],
-```
-
-**When to use:**
-- Auto-discovery disabled
-- Signals outside standard directory
-- Fine-grained control over which Signals run
-
-## Logging
-
-Signal uses Laravel's logging system.
-
-### Configure Logging
-
-Standard Laravel log configuration applies:
+## Debug
 
 ```php
-// config/logging.php
-'channels' => [
-    'signal' => [
-        'driver' => 'daily',
-        'path' => storage_path('logs/signal.log'),
-        'level' => env('SIGNAL_LOG_LEVEL', 'debug'),
-        'days' => 14,
-    ],
-],
+'debug' => env('SIGNAL_DEBUG', false),
 ```
 
-Use in Signals:
+When on, every dispatch to a Signal is logged at debug level with the Signal name, event kind, collection, operation, DID and whether it was queued.
 
-```php
-use Illuminate\Support\Facades\Log;
+## Unused Keys
 
-public function handle(SignalEvent $event): void
-{
-    Log::channel('signal')->info('Processing event', [
-        'did' => $event->did,
-    ]);
-}
-```
-
-## Complete Configuration Reference
-
-Here's the full `config/signal.php` with all options:
-
-```php
-<?php
-
-return [
-
-    /*
-    |--------------------------------------------------------------------------
-    | Consumer Mode
-    |--------------------------------------------------------------------------
-    |
-    | Choose between 'jetstream' (JSON events) or 'firehose' (CBOR/CAR events).
-    | Jetstream provides simplified JSON events with server-side filtering.
-    | Firehose provides raw CBOR/CAR data with comprehensive access.
-    |
-    | Options: 'jetstream', 'firehose'
-    |
-    */
-
-    'mode' => env('SIGNAL_MODE', 'jetstream'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Jetstream Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configuration for Jetstream mode (JSON events).
-    |
-    */
-
-    'jetstream' => [
-        'websocket_url' => env(
-            'SIGNAL_JETSTREAM_URL',
-            'wss://jetstream2.us-east.bsky.network'
-        ),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Firehose Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configuration for Firehose mode (CBOR/CAR events).
-    |
-    */
-
-    'firehose' => [
-        'host' => env('SIGNAL_FIREHOSE_HOST', 'bsky.network'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Obelisk Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Obelisk is a self-hostable AT Protocol record archive. Push delivery
-    | (webhooks) and pull delivery (cursor polling) read the same event log.
-    |
-    */
-
-    'obelisk' => [
-        'enabled' => env('OBELISK_ENABLED', false),
-        'base_url' => env('OBELISK_URL', 'http://localhost:6060'),
-        'token' => env('OBELISK_TOKEN'),
-        'timeout' => (int) env('OBELISK_TIMEOUT', 30),
-        'webhook_path' => env('OBELISK_WEBHOOK_PATH', '/_atp/obelisk/webhook'),
-        'webhook_secret' => env('OBELISK_WEBHOOK_SECRET'),
-        'webhook_middleware' => ['api'],
-        'verify_signature' => env('OBELISK_VERIFY_SIGNATURE', true),
-        'queue_events' => env('OBELISK_QUEUE_EVENTS', true),
-        'queue_connection' => env('OBELISK_QUEUE_CONNECTION'),
-        'queue_name' => env('OBELISK_QUEUE', 'obelisk'),
-        'pull' => [
-            'limit' => (int) env('OBELISK_PULL_LIMIT', 200),
-            'poll_interval' => (int) env('OBELISK_PULL_POLL_INTERVAL', 5),
-            'collection' => env('OBELISK_PULL_COLLECTION'),
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Cursor Storage
-    |--------------------------------------------------------------------------
-    |
-    | Configure how Signal stores cursor positions for resuming after
-    | disconnections. Options: 'database', 'redis', 'file'
-    |
-    */
-
-    'cursor_storage' => env('SIGNAL_CURSOR_STORAGE', 'database'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Redis Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configuration for Redis cursor storage.
-    |
-    */
-
-    'redis' => [
-        'connection' => env('SIGNAL_REDIS_CONNECTION', 'default'),
-        'key_prefix' => env('SIGNAL_REDIS_PREFIX', 'signal:cursor:'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | File Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configuration for file-based cursor storage.
-    |
-    */
-
-    'file' => [
-        'path' => env('SIGNAL_FILE_PATH', storage_path('app/signal')),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Queue Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Configure queue connection and name for processing events asynchronously.
-    |
-    */
-
-    'queue' => [
-        'connection' => env('SIGNAL_QUEUE_CONNECTION', null),
-        'queue' => env('SIGNAL_QUEUE', 'default'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Auto-Discovery
-    |--------------------------------------------------------------------------
-    |
-    | Automatically discover and register Signals from the specified directory.
-    |
-    */
-
-    'auto_discovery' => [
-        'enabled' => true,
-        'path' => app_path('Signals'),
-        'namespace' => 'App\\Signals',
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Manual Signal Registration
-    |--------------------------------------------------------------------------
-    |
-    | Manually register Signals if auto-discovery is disabled.
-    |
-    */
-
-    'signals' => [
-        // \App\Signals\NewPostSignal::class,
-    ],
-
-];
-```
-
-## Environment-Specific Configuration
-
-### Development
-
-```env
-SIGNAL_MODE=firehose
-SIGNAL_CURSOR_STORAGE=file
-SIGNAL_QUEUE_CONNECTION=sync
-```
-
-**Why:**
-- Firehose mode sees all events (comprehensive testing)
-- File storage is simple and adequate
-- Sync queue processes immediately (easier debugging)
-
-### Staging
-
-```env
-SIGNAL_MODE=jetstream
-SIGNAL_CURSOR_STORAGE=redis
-SIGNAL_QUEUE_CONNECTION=redis
-SIGNAL_QUEUE=signal-staging
-```
-
-**Why:**
-- Jetstream mode matches production
-- Redis for performance testing
-- Separate queue for staging isolation
-
-### Production
-
-```env
-SIGNAL_MODE=jetstream
-SIGNAL_CURSOR_STORAGE=database
-SIGNAL_QUEUE_CONNECTION=redis
-SIGNAL_QUEUE=signal
-```
-
-**Why:**
-- Jetstream mode for efficiency
-- Database storage for reliability
-- Redis queues for performance
+The `performance` (`batch_size`, `rate_limit`, from `SIGNAL_BATCH_SIZE` and `SIGNAL_RATE_LIMIT`) and `logging` (`channel`, `level`, from `SIGNAL_LOG_CHANNEL` and `SIGNAL_LOG_LEVEL`) sections exist in the config file but are not read by the package. The package logs through Laravel's default log channel.
 
 ## Runtime Configuration
 
-Change configuration at runtime:
+The `Signal` facade reads `atp-signals.mode` when it starts, so you can change the mode in code before starting a consumer:
 
 ```php
 use SocialDept\AtpSignals\Facades\Signal;
 
-// Override mode
-config(['signal.mode' => 'firehose']);
+config(['atp-signals.mode' => 'firehose']);
 
-// Override cursor storage
-config(['signal.cursor_storage' => 'redis']);
-
-// Start consumer with new config
-Signal::start();
+Signal::getMode(); // 'firehose'
+Signal::start();   // blocks until the consumer stops
 ```
 
-## Validation
-
-Signal validates configuration on startup:
-
-```bash
-php artisan signal:consume
-```
-
-**Checks:**
-- Mode is valid (`jetstream` or `firehose`)
-- Cursor storage driver exists
-- Required endpoints are configured
-- Queue configuration is valid
-
-**Validation errors prevent consumer from starting.**
-
-## Configuration Helpers
-
-### Check Current Mode
-
-```php
-$mode = config('signal.mode'); // 'jetstream' or 'firehose'
-```
-
-Or via Facade:
-
-```php
-use SocialDept\AtpSignals\Facades\Signal;
-
-$mode = Signal::getMode();
-```
-
-### Check Cursor Storage
-
-```php
-$storage = config('signal.cursor_storage'); // 'database', 'redis', or 'file'
-```
-
-### Check Queue Configuration
-
-```php
-$connection = config('signal.queue.connection');
-$queue = config('signal.queue.queue');
-```
-
-## Best Practices
-
-### Use Environment Variables
-
-Don't hardcode values in config file:
-
-```php
-// Good
-'mode' => env('SIGNAL_MODE', 'jetstream'),
-
-// Bad
-'mode' => 'jetstream',
-```
-
-### Separate Staging and Production
-
-Use different queues and storage:
-
-```env
-# .env.staging
-SIGNAL_QUEUE=signal-staging
-
-# .env.production
-SIGNAL_QUEUE=signal-production
-```
-
-### Document Custom Configuration
-
-If you change defaults, document why:
-
-```php
-// We use Firehose mode because we need raw CBOR/CAR data access
-'mode' => env('SIGNAL_MODE', 'firehose'),
-```
-
-### Version Control
-
-Commit `config/signal.php` but not `.env`:
-
-```gitignore
-# .gitignore
-.env
-.env.*
-
-# Commit
-config/signal.php
-```
+`Signal::start()` takes an optional cursor with the same meaning as on the command: `null` resumes from the stored cursor, `0` ignores it, any other value starts there. `Signal::stop()` stops the consumer for the current mode.
 
 ## Troubleshooting
 
-### Configuration Not Loading
-
-Clear config cache:
+If changes to `.env` have no effect, your configuration is probably cached:
 
 ```bash
 php artisan config:clear
-php artisan config:cache
 ```
 
-### Environment Variables Not Working
-
-Check `.env` file exists and is readable:
-
-```bash
-ls -la .env
-```
-
-Restart services after changing `.env`:
-
-```bash
-# If using Supervisor
-sudo supervisorctl restart signal-consumer:*
-```
-
-### Invalid Configuration
-
-Run consumer to see validation errors:
-
-```bash
-php artisan signal:consume
-```
-
-Signal will display specific errors about misconfiguration.
+`signal:consume` is a long-running process, so restart it after changing configuration.
 
 ## Next Steps
 
-- **[Learn about testing →](testing.md)** - Test your configuration
-- **[See real-world examples →](examples.md)** - Learn from production configurations
-- **[Review queue integration →](queues.md)** - Configure queues optimally
+- **[Learn about testing](../signals/testing.md)**: test your Signals
+- **[See examples](../examples.md)**: complete Signals for common tasks
+- **[Review queue integration](../signals/queues.md)**: run Signals on queues

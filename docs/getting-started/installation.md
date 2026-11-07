@@ -1,209 +1,72 @@
 # Installation
 
-Signal is designed to be installed quickly and easily in any Laravel 11+ application.
+Part of the [atp-signals docs](../introduction.md#documentation). Installing the package, its config and the cursor table.
 
-## Requirements
-
-Before installing Signal, ensure your environment meets these requirements:
-
-- **PHP 8.2 or higher**
-- **Laravel 11.0 or higher**
-- **WebSocket support** (enabled by default in most environments)
-- **Database** (for cursor storage)
-
-## Composer Installation
-
-Install Signal via Composer:
+## Installing
 
 ```bash
 composer require socialdept/atp-signals
-```
-
-## Quick Setup
-
-Run the installation command to set up everything automatically:
-
-```bash
 php artisan signal:install
 ```
 
-This interactive command will:
-
-1. Publish the configuration file to `config/signal.php`
-2. Publish database migrations for cursor storage
-3. Ask if you'd like to run migrations immediately
-4. Display next steps and helpful information
-
-### What Gets Created
-
-After installation, you'll have:
-
-- **Configuration file**: `config/signal.php` - All Signal settings
-- **Migration**: `database/migrations/2024_01_01_000000_create_signal_cursors_table.php` - Cursor storage
-- **Signal directory**: `app/Signals/` - Where your Signals live (created when you make your first Signal)
-
-## Manual Installation
-
-If you prefer more control, you can install manually:
-
-### 1. Publish Configuration
+`signal:install` publishes the config file and the cursor migration, then asks whether to run the migrations now. To do the same by hand:
 
 ```bash
-php artisan vendor:publish --tag=signal-config
-```
-
-This creates `config/signal.php` with all available options.
-
-### 2. Publish Migrations
-
-```bash
+php artisan vendor:publish --tag=atp-signals-config
 php artisan vendor:publish --tag=signal-migrations
-```
-
-This creates the cursor storage migration in `database/migrations/`.
-
-### 3. Run Migrations
-
-```bash
 php artisan migrate
 ```
 
-This creates the `signal_cursors` table for resuming from last position after disconnections.
-
-## Environment Configuration
-
-Add Signal configuration to your `.env` file:
-
-```env
-# Consumer Mode (jetstream or firehose)
-SIGNAL_MODE=jetstream
-
-# Jetstream URL (if using jetstream mode)
-SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
-
-# Firehose Host (if using firehose mode)
-SIGNAL_FIREHOSE_HOST=bsky.network
-
-# Optional: Cursor Storage Driver (database, redis, or file)
-SIGNAL_CURSOR_STORAGE=database
-
-# Optional: Queue Configuration
-SIGNAL_QUEUE_CONNECTION=redis
-SIGNAL_QUEUE=signal
-```
-
-## Choosing Your Mode
-
-Signal supports three modes for consuming events. Choose based on your use case:
-
-### Jetstream Mode (Recommended)
-
-Best for most applications:
-
-```env
-SIGNAL_MODE=jetstream
-SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
-```
-
-**Advantages:**
-- Simplified JSON events (easy to work with)
-- Server-side collection filtering (efficient)
-- Lower bandwidth and processing overhead
-
-### Firehose Mode
-
-Best for comprehensive indexing and raw data access:
-
-```env
-SIGNAL_MODE=firehose
-SIGNAL_FIREHOSE_HOST=bsky.network
-```
-
-**Advantages:**
-- Access to raw CBOR/CAR data
-- Full AT Protocol event stream
-- Complete control over event processing
-
-**Trade-offs:**
-- Client-side filtering only (higher bandwidth)
-- More processing overhead
-
-### Obelisk Mode
-
-Best for delivery that survives downtime and can be replayed:
-
-```env
-OBELISK_ENABLED=true
-OBELISK_URL=http://localhost:6060
-OBELISK_TOKEN=your-archive-bearer-token
-OBELISK_WEBHOOK_SECRET=from-createWebhook
-```
-
-**Advantages:**
-- Durable event log — a consumer that was down resumes where it stopped
-- Replay by rewinding a cursor
-- Batched delivery that cannot flood your app
-- Push (no long-running PHP process) or pull (no inbound URL)
-
-**Trade-offs:**
-- Requires running Obelisk and Postgres alongside your app
-- Commit events only (no identity or account stream)
-
-[Learn more about choosing the right mode →](modes.md) | [Learn more about Obelisk →](obelisk.md)
-
-## Verify Installation
-
-Check that Signal is installed correctly:
+Signals live in `app/Signals`, which is created with the first `php artisan make:signal`. To check that the package is installed, list the Signals it has found:
 
 ```bash
 php artisan signal:list
 ```
 
-This should display available Signals (initially none until you create them).
+## Configuration
 
-## Next Steps
+The config is published to `config/atp-signals.php` and read as `atp-signals.*`. The settings most apps change come from the environment:
 
-Now that Signal is installed, you're ready to start building:
+```env
+# Where events come from: jetstream, firehose or obelisk
+SIGNAL_MODE=jetstream
 
-1. **[Create your first Signal →](quickstart.md)**
-2. **[Learn about Signal architecture →](signals.md)**
-3. **[Understand filtering options →](filtering.md)**
+# Jetstream (the default mode)
+SIGNAL_JETSTREAM_URL=wss://jetstream2.us-east.bsky.network
+
+# Firehose
+SIGNAL_FIREHOSE_HOST=bsky.network
+
+# Where the cursor is kept: database, redis or file
+SIGNAL_CURSOR_STORAGE=database
+
+# Queue for Signals that return true from shouldQueue()
+SIGNAL_QUEUE_CONNECTION=redis
+SIGNAL_QUEUE=signal
+```
+
+[Consumption modes](../sources/modes.md) explains how to choose a mode, and [Configuration](configuration.md) covers every option.
+
+## Database
+
+The package loads its migration itself, so `php artisan migrate` creates the `signal_cursors` table whether or not the migration was published. The table holds the position each consumer has reached, so a consumer that restarts picks up where it stopped. It is only used with the `database` cursor store. The `redis` store keeps the cursor under the `signal:cursor` key, and the `file` store in `storage/signal/cursor.json`.
 
 ## Troubleshooting
 
-### Migration Already Exists
+### WebSocket connection issues
 
-If you see "migration already exists" when running `signal:install`, you've likely already installed Signal. You can safely skip this step.
+If the consumer cannot connect, check that the host allows outbound WebSocket connections, and try the other Jetstream endpoint (`wss://jetstream1.us-west.bsky.network`).
 
-### WebSocket Connection Issues
+### Cursor storage errors
 
-If you experience WebSocket connection issues:
+- **Database store**: check that the database connection works and the migration has run.
+- **Redis store**: check that the Redis connection is available.
+- **File store**: check that Laravel can write to `storage/signal/`.
 
-1. Verify your firewall allows WebSocket connections
-2. Check that your hosting environment supports WebSockets
-3. Try switching Jetstream endpoints (US East vs US West)
-
-### Permission Errors
-
-If you encounter permission errors with cursor storage:
-
-- **Database mode**: Ensure database connection is configured correctly
-- **Redis mode**: Verify Redis connection is available
-- **File mode**: Check that Laravel has write permissions to `storage/app/signal/`
-
-## Uninstallation
-
-To remove Signal from your application:
+## Uninstalling
 
 ```bash
-# Remove the package
 composer remove socialdept/atp-signals
-
-# Optionally, rollback migrations
-php artisan migrate:rollback
 ```
 
-You can also manually delete:
-- `config/signal.php`
-- `app/Signals/` directory
-- Signal-related migrations
+Then delete `config/atp-signals.php`, the `app/Signals` directory and the published migration, and drop the `signal_cursors` table if you no longer need it.

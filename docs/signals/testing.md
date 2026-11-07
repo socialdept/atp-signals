@@ -1,436 +1,105 @@
 # Testing Signals
 
-Testing your Signals ensures they behave correctly before deploying to production. Signal provides tools for both manual and automated testing.
+Part of the [atp-signals docs](../introduction.md#documentation). Testing Signals with the `signal:test` command and with PHPUnit.
 
 ## Quick Testing with Artisan
 
-The fastest way to test a Signal is with the `signal:test` command.
-
-### Test a Signal
+The `signal:test` command runs a Signal once against a built-in sample event.
 
 ```bash
 php artisan signal:test NewPostSignal
 ```
 
-This runs your Signal with sample event data and displays the output.
+The argument is a full class name, or a short name that is looked up under `App\Signals\`.
 
 ### What It Does
 
-1. Creates a sample `SignalEvent` matching your Signal's filters
-2. Calls your Signal's `handle()` method
-3. Displays output, logs, and any errors
-4. Shows execution time
+1. Builds a fixed sample commit event: a `create` on `app.bsky.feed.post` from `did:plc:sample123456789`, with a short text record
+2. Prints the event as JSON
+3. Calls your Signal's `shouldHandle()`, then `handle()` if it returned `true`
+4. Prints a success line, or the exception message and a failure exit code
+
+`--sample` picks the sample event. `commit` is the only sample available, and it is the default.
 
 ### Example Output
 
 ```
-Testing Signal: App\Signals\NewPostSignal
+Testing signal: App\Signals\NewPostSignal
 
-Creating sample commit event for collection: app.bsky.feed.post
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Sample event created:
+{
+    "did": "did:plc:sample123456789",
+    "time_us": 1730000000000000,
+    "kind": "commit",
+    "commit": {
+        "rev": "sample-rev",
+        "operation": "create",
+        "collection": "app.bsky.feed.post",
+        "rkey": "sample-rkey",
+        "record": {
+            "text": "This is a sample post for testing",
+            "createdAt": "2026-01-01T00:00:00+00:00"
+        },
+        "cid": "sample-cid"
+    },
+    "identity": null,
+    "account": null
+}
 
-Event Details:
-  DID: did:plc:test123
-  Collection: app.bsky.feed.post
-  Operation: create
-  Text: Sample post for testing
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Processing event...
-✓ Signal processed successfully
-
-Execution time: 12ms
+Calling signal->handle()...
+✓ Signal executed successfully
 ```
+
+If `shouldHandle()` returns `false`, it prints `Signal->shouldHandle() returned false` instead.
 
 ### Limitations
 
-- Uses sample data (not real events)
-- Doesn't test filtering logic comprehensively
-- Can't test queue behavior
-- Limited to basic scenarios
+- The sample event is always the same post create, whatever your Signal listens for
+- It skips the `eventTypes()`, `collections()`, `operations()` and `dids()` filters. Only `shouldHandle()` runs
+- It calls `handle()` directly, even when `shouldQueue()` returns `true`, and never calls `failed()`
 
-For comprehensive testing, write automated tests.
+For anything beyond a smoke test, write PHPUnit tests.
 
-## Unit Testing
+## Building Events
 
-Test your Signals in isolation.
-
-### Basic Test Structure
+A `SignalEvent` is a plain object you can construct directly. For commit events, pass a `CommitEvent`. The operation can be a string or a `SignalCommitOperation` case.
 
 ```php
-<?php
-
-namespace Tests\Unit\Signals;
-
-use App\Signals\NewPostSignal;
 use SocialDept\AtpSignals\Events\CommitEvent;
 use SocialDept\AtpSignals\Events\SignalEvent;
-use Tests\TestCase;
 
-class NewPostSignalTest extends TestCase
-{
-    /** @test */
-    public function it_handles_new_posts()
-    {
-        $signal = new NewPostSignal();
-
-        $event = new SignalEvent(
-            did: 'did:plc:test123',
-            timeUs: time() * 1000000,
-            kind: 'commit',
-            commit: new CommitEvent(
-                rev: 'test',
-                operation: 'create',
-                collection: 'app.bsky.feed.post',
-                rkey: 'test123',
-                record: (object) [
-                    'text' => 'Hello World!',
-                    'createdAt' => now()->toIso8601String(),
-                ],
-            ),
-        );
-
-        $signal->handle($event);
-
-        // Assert expected behavior
-        $this->assertDatabaseHas('posts', [
+$event = new SignalEvent(
+    did: 'did:plc:test123',
+    timeUs: time() * 1000000,
+    kind: 'commit',
+    commit: new CommitEvent(
+        rev: 'test',
+        operation: 'create',
+        collection: 'app.bsky.feed.post',
+        rkey: 'test123',
+        record: (object) [
             'text' => 'Hello World!',
-        ]);
-    }
-}
+            'createdAt' => now()->toIso8601String(),
+        ],
+    ),
+);
 ```
 
-### Testing Event Types
-
-Verify your Signal listens for correct event types:
+A small trait keeps this out of each test:
 
 ```php
-/** @test */
-public function it_listens_for_commit_events()
-{
-    $signal = new NewPostSignal();
-
-    $eventTypes = $signal->eventTypes();
-
-    $this->assertContains('commit', $eventTypes);
-}
-```
-
-### Testing Filters
-
-Verify collection filtering:
-
-```php
-/** @test */
-public function it_filters_to_posts_only()
-{
-    $signal = new NewPostSignal();
-
-    $collections = $signal->collections();
-
-    $this->assertEquals(['app.bsky.feed.post'], $collections);
-}
-```
-
-### Testing Operation Filtering
-
-```php
-/** @test */
-public function it_only_handles_creates()
-{
-    $signal = new NewPostSignal();
-
-    $operations = $signal->operations();
-
-    $this->assertEquals([SignalCommitOperation::Create], $operations);
-}
-```
-
-### Testing Custom Filtering
-
-```php
-/** @test */
-public function it_filters_posts_with_images()
-{
-    $signal = new ImagePostSignal();
-
-    // Event with image
-    $eventWithImage = $this->createEvent([
-        'text' => 'Check this out!',
-        'embed' => (object) ['type' => 'image'],
-    ]);
-
-    $this->assertTrue($signal->shouldHandle($eventWithImage));
-
-    // Event without image
-    $eventWithoutImage = $this->createEvent([
-        'text' => 'Just text',
-    ]);
-
-    $this->assertFalse($signal->shouldHandle($eventWithoutImage));
-}
-```
-
-## Feature Testing
-
-Test Signals in the context of your application.
-
-### Test with Database
-
-```php
-<?php
-
-namespace Tests\Feature\Signals;
-
-use App\Models\Post;
-use App\Signals\StorePostSignal;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use SocialDept\AtpSignals\Events\CommitEvent;
 use SocialDept\AtpSignals\Events\SignalEvent;
-use Tests\TestCase;
 
-class StorePostSignalTest extends TestCase
-{
-    use RefreshDatabase;
-
-    /** @test */
-    public function it_stores_posts_in_database()
-    {
-        $signal = new StorePostSignal();
-
-        $event = new SignalEvent(
-            did: 'did:plc:test123',
-            timeUs: time() * 1000000,
-            kind: 'commit',
-            commit: new CommitEvent(
-                rev: 'abc',
-                operation: 'create',
-                collection: 'app.bsky.feed.post',
-                rkey: 'test',
-                record: (object) [
-                    'text' => 'Test post',
-                    'createdAt' => now()->toIso8601String(),
-                ],
-            ),
-        );
-
-        $signal->handle($event);
-
-        $this->assertDatabaseHas('posts', [
-            'did' => 'did:plc:test123',
-            'text' => 'Test post',
-        ]);
-    }
-
-    /** @test */
-    public function it_updates_existing_posts()
-    {
-        Post::create([
-            'did' => 'did:plc:test123',
-            'rkey' => 'test',
-            'text' => 'Old text',
-        ]);
-
-        $signal = new StorePostSignal();
-
-        $event = $this->createUpdateEvent([
-            'text' => 'New text',
-        ]);
-
-        $signal->handle($event);
-
-        $this->assertDatabaseHas('posts', [
-            'did' => 'did:plc:test123',
-            'text' => 'New text',
-        ]);
-
-        $this->assertEquals(1, Post::count());
-    }
-
-    /** @test */
-    public function it_deletes_posts()
-    {
-        Post::create([
-            'did' => 'did:plc:test123',
-            'rkey' => 'test',
-            'text' => 'Test post',
-        ]);
-
-        $signal = new StorePostSignal();
-
-        $event = $this->createDeleteEvent();
-
-        $signal->handle($event);
-
-        $this->assertDatabaseMissing('posts', [
-            'did' => 'did:plc:test123',
-            'rkey' => 'test',
-        ]);
-    }
-}
-```
-
-### Test with External APIs
-
-```php
-use Illuminate\Support\Facades\Http;
-
-/** @test */
-public function it_sends_notifications()
-{
-    Http::fake();
-
-    $signal = new NotificationSignal();
-
-    $event = $this->createEvent();
-
-    $signal->handle($event);
-
-    Http::assertSent(function ($request) {
-        return $request->url() === 'https://api.example.com/notify' &&
-               $request['text'] === 'New post created';
-    });
-}
-```
-
-## Testing Queued Signals
-
-Test Signals that use queues.
-
-### Test Queue Dispatch
-
-```php
-use Illuminate\Support\Facades\Queue;
-
-/** @test */
-public function it_queues_events()
-{
-    Queue::fake();
-
-    $signal = new QueuedSignal();
-
-    $this->assertTrue($signal->shouldQueue());
-
-    // In production, this would queue
-    // For testing, we verify the intent
-}
-```
-
-### Test with Sync Queue
-
-Process queued jobs synchronously in tests:
-
-```php
-/** @test */
-public function it_processes_queued_events()
-{
-    // Use sync queue for immediate processing
-    config(['queue.default' => 'sync']);
-
-    $signal = new QueuedSignal();
-
-    $event = $this->createEvent();
-
-    $signal->handle($event);
-
-    // Assert side effects happened
-    $this->assertDatabaseHas('posts', [...]);
-}
-```
-
-### Test Queue Configuration
-
-```php
-/** @test */
-public function it_uses_high_priority_queue()
-{
-    $signal = new HighPrioritySignal();
-
-    $this->assertTrue($signal->shouldQueue());
-    $this->assertEquals('high-priority', $signal->queue());
-}
-
-/** @test */
-public function it_uses_redis_connection()
-{
-    $signal = new RedisQueueSignal();
-
-    $this->assertEquals('redis', $signal->queueConnection());
-}
-```
-
-## Testing Failure Handling
-
-Test how your Signal handles errors.
-
-### Test Failed Method
-
-```php
-use Illuminate\Support\Facades\Log;
-
-/** @test */
-public function it_logs_failures()
-{
-    Log::spy();
-
-    $signal = new FailureHandlingSignal();
-
-    $event = $this->createEvent();
-    $exception = new \Exception('Something went wrong');
-
-    $signal->failed($event, $exception);
-
-    Log::shouldHaveReceived('error')
-        ->with('Signal failed', \Mockery::any());
-}
-```
-
-### Test Exception Handling
-
-```php
-/** @test */
-public function it_handles_invalid_data_gracefully()
-{
-    $signal = new RobustSignal();
-
-    $event = new SignalEvent(
-        did: 'did:plc:test',
-        timeUs: time() * 1000000,
-        kind: 'commit',
-        commit: new CommitEvent(
-            rev: 'test',
-            operation: 'create',
-            collection: 'app.bsky.feed.post',
-            rkey: 'test',
-            record: (object) [], // Missing required fields
-        ),
-    );
-
-    // Should not throw
-    $signal->handle($event);
-
-    // Should handle gracefully (e.g., log and skip)
-    $this->assertDatabaseCount('posts', 0);
-}
-```
-
-## Test Helpers
-
-Create reusable helpers for common test scenarios.
-
-### Event Factory Helper
-
-```php
 trait CreatesSignalEvents
 {
     protected function createCommitEvent(array $overrides = []): SignalEvent
     {
-        $defaults = [
-            'did' => 'did:plc:test123',
-            'timeUs' => time() * 1000000,
-            'kind' => 'commit',
-            'commit' => new CommitEvent(
+        return new SignalEvent(
+            did: $overrides['did'] ?? 'did:plc:test123',
+            timeUs: time() * 1000000,
+            kind: 'commit',
+            commit: new CommitEvent(
                 rev: 'test',
                 operation: $overrides['operation'] ?? 'create',
                 collection: $overrides['collection'] ?? 'app.bsky.feed.post',
@@ -440,289 +109,147 @@ trait CreatesSignalEvents
                     'createdAt' => now()->toIso8601String(),
                 ], $overrides['record'] ?? []),
             ),
-        ];
-
-        return new SignalEvent(...$defaults);
-    }
-
-    protected function createPostEvent(array $record = []): SignalEvent
-    {
-        return $this->createCommitEvent([
-            'collection' => 'app.bsky.feed.post',
-            'record' => $record,
-        ]);
-    }
-
-    protected function createLikeEvent(array $record = []): SignalEvent
-    {
-        return $this->createCommitEvent([
-            'collection' => 'app.bsky.feed.like',
-            'record' => array_merge([
-                'subject' => (object) [
-                    'uri' => 'at://did:plc:test/app.bsky.feed.post/test',
-                    'cid' => 'bafytest',
-                ],
-                'createdAt' => now()->toIso8601String(),
-            ], $record),
-        ]);
-    }
-
-    protected function createFollowEvent(array $record = []): SignalEvent
-    {
-        return $this->createCommitEvent([
-            'collection' => 'app.bsky.graph.follow',
-            'record' => array_merge([
-                'subject' => 'did:plc:target',
-                'createdAt' => now()->toIso8601String(),
-            ], $record),
-        ]);
+        );
     }
 }
 ```
 
-Use in tests:
+## Testing `handle()`
+
+Call `handle()` directly and assert on its side effects:
 
 ```php
-class MySignalTest extends TestCase
+<?php
+
+namespace Tests\Feature\Signals;
+
+use App\Signals\StorePostSignal;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class StorePostSignalTest extends TestCase
 {
     use CreatesSignalEvents;
-
-    /** @test */
-    public function it_handles_posts()
-    {
-        $event = $this->createPostEvent([
-            'text' => 'Custom text',
-        ]);
-
-        // Test with event
-    }
-}
-```
-
-### Signal Factory Helper
-
-```php
-trait CreatesSignals
-{
-    protected function createSignal(string $class, array $config = [])
-    {
-        $signal = new $class();
-
-        // Override configuration for testing
-        foreach ($config as $method => $value) {
-            $signal->{$method} = $value;
-        }
-
-        return $signal;
-    }
-}
-```
-
-## Testing Best Practices
-
-### Use Descriptive Test Names
-
-```php
-// Good
-/** @test */
-public function it_stores_posts_with_valid_data()
-
-/** @test */
-public function it_skips_posts_without_text()
-
-/** @test */
-public function it_handles_duplicate_posts_gracefully()
-
-// Less descriptive
-/** @test */
-public function test_handle()
-```
-
-### Test Edge Cases
-
-```php
-/** @test */
-public function it_handles_empty_text()
-{
-    $event = $this->createPostEvent(['text' => '']);
-    // Test behavior
-}
-
-/** @test */
-public function it_handles_very_long_text()
-{
-    $event = $this->createPostEvent(['text' => str_repeat('a', 10000)]);
-    // Test behavior
-}
-
-/** @test */
-public function it_handles_missing_created_at()
-{
-    $event = $this->createPostEvent(['createdAt' => null]);
-    // Test behavior
-}
-```
-
-### Test All Operations
-
-```php
-/** @test */
-public function it_handles_creates()
-{
-    $event = $this->createEvent(['operation' => 'create']);
-    // Test
-}
-
-/** @test */
-public function it_handles_updates()
-{
-    $event = $this->createEvent(['operation' => 'update']);
-    // Test
-}
-
-/** @test */
-public function it_handles_deletes()
-{
-    $event = $this->createEvent(['operation' => 'delete']);
-    // Test
-}
-```
-
-### Mock External Dependencies
-
-```php
-/** @test */
-public function it_calls_external_api()
-{
-    Http::fake([
-        'api.example.com/*' => Http::response(['success' => true]),
-    ]);
-
-    $signal = new ApiSignal();
-    $event = $this->createEvent();
-
-    $signal->handle($event);
-
-    Http::assertSent(function ($request) {
-        return $request->url() === 'https://api.example.com/endpoint';
-    });
-}
-```
-
-### Test Database State
-
-```php
-use Illuminate\Foundation\Testing\RefreshDatabase;
-
-class DatabaseSignalTest extends TestCase
-{
     use RefreshDatabase;
 
-    /** @test */
-    public function it_creates_records()
+    public function test_it_stores_posts(): void
     {
-        // Fresh database for each test
+        $event = $this->createCommitEvent(['record' => ['text' => 'Test post']]);
+
+        app(StorePostSignal::class)->handle($event);
+
+        $this->assertDatabaseHas('posts', [
+            'did' => 'did:plc:test123',
+            'text' => 'Test post',
+        ]);
+    }
+
+    public function test_it_deletes_posts(): void
+    {
+        // Seed a post with rkey "test" first, then:
+        $event = $this->createCommitEvent(['operation' => 'delete']);
+
+        app(StorePostSignal::class)->handle($event);
+
+        $this->assertDatabaseMissing('posts', [
+            'did' => 'did:plc:test123',
+            'rkey' => 'test',
+        ]);
     }
 }
 ```
 
-## Continuous Integration
+Resolving the Signal with `app()` matches what the package does, so constructor dependencies are injected.
 
-Run tests automatically on every commit.
+## Testing Filters
 
-### GitHub Actions
-
-```yaml
-# .github/workflows/tests.yml
-name: Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: 8.2
-
-      - name: Install Dependencies
-        run: composer install
-
-      - name: Run Tests
-        run: php artisan test
-```
-
-### Run Signal-Specific Tests
-
-```bash
-# Run all Signal tests
-php artisan test --testsuite=Signals
-
-# Run specific test file
-php artisan test tests/Unit/Signals/NewPostSignalTest.php
-
-# Run with coverage
-php artisan test --coverage
-```
-
-## Debugging Tests
-
-### Enable Debug Output
+Calling `handle()` directly bypasses filtering. To check that your `eventTypes()`, `collections()` (including wildcards), `operations()`, `dids()` and `shouldHandle()` match the events you expect, register the Signal on a fresh `SignalRegistry` and ask it for matches:
 
 ```php
-/** @test */
-public function it_processes_events()
+use App\Signals\NewPostSignal;
+use SocialDept\AtpSignals\Services\SignalRegistry;
+
+public function test_it_matches_post_creates_only(): void
 {
-    $signal = new NewPostSignal();
+    $registry = new SignalRegistry();
+    $registry->register(NewPostSignal::class);
 
-    $event = $this->createEvent();
+    $create = $this->createCommitEvent(['operation' => 'create']);
+    $delete = $this->createCommitEvent(['operation' => 'delete']);
+    $like = $this->createCommitEvent(['collection' => 'app.bsky.feed.like']);
 
-    dump($event); // Output event data
-
-    $signal->handle($event);
-
-    dump(Post::all()); // Output results
+    $this->assertCount(1, $registry->getMatchingSignals($create));
+    $this->assertCount(0, $registry->getMatchingSignals($delete));
+    $this->assertCount(0, $registry->getMatchingSignals($like));
 }
 ```
 
-### Use dd() to Stop Execution
+`getMatchingSignals()` applies the same checks the consumer does, in the same order, ending with `shouldHandle()`.
+
+## Testing Queued Signals
+
+To test queueing, send the event through the `EventDispatcher` with the queue faked. The dispatcher pushes a `ProcessSignalJob` for each matching Signal whose `shouldQueue()` returns `true`:
 
 ```php
-/** @test */
-public function it_processes_events()
+use Illuminate\Support\Facades\Queue;
+use SocialDept\AtpSignals\Jobs\ProcessSignalJob;
+use SocialDept\AtpSignals\Services\EventDispatcher;
+
+public function test_it_queues_post_events(): void
 {
-    $event = $this->createEvent();
+    Queue::fake();
 
-    dd($event); // Dump and die
+    app(EventDispatcher::class)->dispatch($this->createCommitEvent());
 
-    // This won't run
+    Queue::assertPushedOn('signal', ProcessSignalJob::class);
 }
 ```
 
-### Check Logs
+The container's dispatcher uses the app's registry, which holds the Signals from `atp-signals.signals` plus auto-discovered ones, so every matching Signal runs. Signals that are not queued still call `handle()` inline.
+
+To run the queued work in the test, use the `sync` queue connection. Queued Signals use your default connection unless `SIGNAL_QUEUE_CONNECTION` or `queueConnection()` says otherwise:
 
 ```php
-/** @test */
-public function it_logs_processing()
+public function test_it_processes_queued_events(): void
+{
+    config(['queue.default' => 'sync']);
+
+    app(EventDispatcher::class)->dispatch($this->createCommitEvent());
+
+    $this->assertDatabaseHas('posts', ['text' => 'Test post']);
+}
+```
+
+To check a Signal's queue settings without dispatching, call the methods:
+
+```php
+$signal = app(HighPrioritySignal::class);
+
+$this->assertTrue($signal->shouldQueue());
+$this->assertSame('high-priority', $signal->queue());
+```
+
+## Testing Failure Handling
+
+The dispatcher catches exceptions from a synchronous `handle()` and passes them to `failed()`. Calling `failed()` directly tests your own handling:
+
+```php
+use Illuminate\Support\Facades\Log;
+
+public function test_it_logs_failures(): void
 {
     Log::spy();
 
-    $signal = new LoggingSignal();
-    $event = $this->createEvent();
+    $signal = app(FailureHandlingSignal::class);
 
-    $signal->handle($event);
+    $signal->failed($this->createCommitEvent(), new \Exception('Something went wrong'));
 
-    Log::shouldHaveReceived('info')->once();
+    Log::shouldHaveReceived('error')->once();
 }
 ```
 
 ## Next Steps
 
-- **[See real-world examples →](examples.md)** - Learn from production test patterns
-- **[Review queue integration →](queues.md)** - Test queued Signals
-- **[Review signals documentation →](signals.md)** - Understand Signal structure
+- **[See examples](../examples.md)**: complete Signals
+- **[Review queue integration](queues.md)**: how queued Signals run
+- **[Review signals documentation](signals.md)**: Signal structure

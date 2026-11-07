@@ -1,5 +1,7 @@
 # Streams
 
+Part of the [atp-signals docs](../introduction.md#documentation). Jetstream v2 and labeler streams in batches, for code that keeps its own cursor.
+
 Low-level subscriptions for code that keeps its own position, such as an indexer that saves the cursor in the same transaction as what it writes. Signals are the right tool for reacting to events one at a time. Streams are for taking the network in batches.
 
 Two streams share one machinery:

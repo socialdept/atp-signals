@@ -1,57 +1,29 @@
 # Queue Integration
 
-Processing AT Protocol events can be resource-intensive. Signal's queue integration lets you handle events asynchronously, preventing bottlenecks and improving performance.
+Part of the [atp-signals docs](../introduction.md#documentation). Handling events on a queue instead of in the consumer process.
 
 ## Why Use Queues?
 
-### Without Queues (Synchronous)
+By default a Signal runs inside the consumer process. The consumer calls `handle()` for each matching event, one after another, so a slow Signal holds up every event behind it.
 
 ```php
 public function handle(SignalEvent $event): void
 {
-    $this->performExpensiveAnalysis($event);  // Blocks for 2 seconds
-    $this->sendNotifications($event);          // Blocks for 1 second
-    $this->updateDatabase($event);             // Blocks for 0.5 seconds
+    $this->performExpensiveAnalysis($event);  // The consumer waits for this
+    $this->sendNotifications($event);
 }
 ```
 
-**Problems:**
-- Consumer blocks while processing (3.5 seconds per event)
-- Events queue up during slow operations
-- Risk of disconnection during long processing
-- Can't scale horizontally
-- Memory issues with long-running processes
+When a Signal is queued, the consumer only pushes a job and moves on. The work runs in your queue workers, which you can scale separately from the consumer.
 
-### With Queues (Asynchronous)
+## Enable Queueing
+
+Return `true` from `shouldQueue()`:
 
 ```php
-public function shouldQueue(): bool
-{
-    return true;
-}
+use SocialDept\AtpSignals\Events\SignalEvent;
+use SocialDept\AtpSignals\Signals\Signal;
 
-public function handle(SignalEvent $event): void
-{
-    $this->performExpensiveAnalysis($event);  // Runs in background
-    $this->sendNotifications($event);          // Runs in background
-    $this->updateDatabase($event);             // Runs in background
-}
-```
-
-**Benefits:**
-- Consumer stays responsive
-- Processing happens in parallel
-- Scale by adding queue workers
-- Better memory management
-- Automatic retry on failures
-
-## Basic Queue Configuration
-
-### Enable Queueing
-
-Simply return `true` from `shouldQueue()`:
-
-```php
 class MySignal extends Signal
 {
     public function eventTypes(): array
@@ -61,7 +33,7 @@ class MySignal extends Signal
 
     public function shouldQueue(): bool
     {
-        return true; // Enable queuing
+        return true;
     }
 
     public function handle(SignalEvent $event): void
@@ -71,54 +43,36 @@ class MySignal extends Signal
 }
 ```
 
-That's it! Signal automatically:
-- Creates a queue job for each event
-- Serializes the event data
-- Dispatches to Laravel's queue system
-- Handles retries and failures
+For each matching event, the dispatcher pushes one `SocialDept\AtpSignals\Jobs\ProcessSignalJob`. The job carries the Signal instance and the `SignalEvent`, both serialized with the job, and calls your `handle()` when a worker picks it up.
 
-### Default Queue Configuration
+Matching still happens in the consumer process. The event type, collection, operation and DID filters, and your `shouldHandle()` method, all run before the job is pushed, so keep `shouldHandle()` cheap.
 
-Signal uses your Laravel queue configuration:
+> [!NOTE]
+> Each event becomes its own job. With more than one worker, jobs can finish in a different order than the events arrived. If your Signal depends on order (for example a create followed by a delete of the same record), use a single worker for its queue.
+
+## Queue Connection and Name
+
+By default, queued Signals use the connection and queue from the package config:
 
 ```env
-# Default queue connection
-QUEUE_CONNECTION=redis
-
-# Signal-specific queue (optional)
-SIGNAL_QUEUE=signal
-
-# Signal queue connection (optional)
+# Queue connection (empty means your app's default QUEUE_CONNECTION)
 SIGNAL_QUEUE_CONNECTION=redis
+
+# Queue name (defaults to "signal")
+SIGNAL_QUEUE=signal
 ```
 
-## Customizing Queue Behavior
+These map to `atp-signals.queue.connection` and `atp-signals.queue.queue`. See [configuration](../getting-started/configuration.md) for the full config file.
 
-### Specify Queue Name
-
-Send events to a specific queue:
-
-```php
-public function shouldQueue(): bool
-{
-    return true;
-}
-
-public function queue(): string
-{
-    return 'high-priority'; // Queue name
-}
-```
-
-Now your events go to the `high-priority` queue:
+Because the default queue name is `signal`, a plain `php artisan queue:work` (which listens on `default`) will not pick these jobs up. Start the worker on the right queue:
 
 ```bash
-php artisan queue:work --queue=high-priority
+php artisan queue:work --queue=signal
 ```
 
-### Specify Queue Connection
+### Per-Signal Overrides
 
-Use a different queue connection:
+Override `queueConnection()` or `queue()` on a Signal to send its jobs somewhere else:
 
 ```php
 public function shouldQueue(): bool
@@ -126,78 +80,33 @@ public function shouldQueue(): bool
     return true;
 }
 
-public function queueConnection(): string
-{
-    return 'redis'; // Connection name
-}
-```
-
-### Combine Queue Configuration
-
-```php
-public function shouldQueue(): bool
-{
-    return true;
-}
-
-public function queueConnection(): string
+public function queueConnection(): ?string
 {
     return 'redis';
 }
 
-public function queue(): string
+public function queue(): ?string
 {
-    return 'signal-events';
+    return 'high-priority';
 }
 ```
 
-## Running Queue Workers
+Both methods take no arguments, so the queue is chosen per Signal, not per event. To route events by priority, split them into separate Signals with different `queue()` values.
 
-### Start a Worker
-
-Process queued events:
+Workers process queues in the order listed:
 
 ```bash
-php artisan queue:work
+php artisan queue:work --queue=high-priority,signal
 ```
 
-### Process Specific Queue
+## Running Workers in Production
 
-```bash
-php artisan queue:work --queue=signal
-```
-
-### Multiple Queues with Priority
-
-Process high-priority queue first:
-
-```bash
-php artisan queue:work --queue=high-priority,default
-```
-
-### Scale with Multiple Workers
-
-Run multiple workers for throughput:
-
-```bash
-# Terminal 1
-php artisan queue:work --queue=signal
-
-# Terminal 2
-php artisan queue:work --queue=signal
-
-# Terminal 3
-php artisan queue:work --queue=signal
-```
-
-### Supervisor Configuration
-
-For production, use Supervisor to manage workers:
+Keep workers running with Supervisor (or Horizon if you use Redis). A minimal Supervisor program for the default `signal` queue:
 
 ```ini
 [program:signal-queue-worker]
 process_name=%(program_name)s_%(process_num)02d
-command=php /path/to/artisan queue:work --sleep=3 --tries=3 --queue=signal
+command=php /path/to/artisan queue:work --queue=signal --tries=3
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -209,25 +118,16 @@ stdout_logfile=/path/to/logs/signal-worker.log
 stopwaitsecs=3600
 ```
 
-This creates 4 workers processing the `signal` queue.
+Run the consumer (`php artisan signal:consume`) as its own long-running process next to the workers.
 
 ## Error Handling
 
-### Failed Method
+### The `failed()` Method
 
-Handle job failures:
+Override `failed()` to react when your Signal throws:
 
 ```php
-public function shouldQueue(): bool
-{
-    return true;
-}
-
-public function handle(SignalEvent $event): void
-{
-    // Your logic that might fail
-    $this->riskyOperation($event);
-}
+use Illuminate\Support\Facades\Log;
 
 public function failed(SignalEvent $event, \Throwable $exception): void
 {
@@ -236,437 +136,84 @@ public function failed(SignalEvent $event, \Throwable $exception): void
         'did' => $event->did,
         'collection' => $event->getCollection(),
         'error' => $exception->getMessage(),
-        'trace' => $exception->getTraceAsString(),
-    ]);
-
-    // Optional: Send alerts
-    $this->notifyAdmin($exception);
-
-    // Optional: Store for manual review
-    FailedSignal::create([
-        'event_data' => $event->toArray(),
-        'exception' => $exception->getMessage(),
     ]);
 }
 ```
 
-### Automatic Retries
+When it is called depends on how the Signal runs:
 
-Laravel automatically retries failed jobs:
+- **Synchronous**: the dispatcher catches any exception from `handle()`, logs `[Signal] Error dispatching to signal`, and calls `failed()` right away. The consumer keeps running.
+- **Queued**: `ProcessSignalJob::failed()` calls your Signal's `failed()` once Laravel marks the job as failed, which is after its last attempt. If pushing the job itself throws (for example the queue connection is down), the dispatcher logs the error and calls `failed()` straight away.
 
-```bash
-# Retry up to 3 times
-php artisan queue:work --tries=3
-```
+### Retries and Timeouts
 
-Configure retry delay:
-
-```php
-public function retryAfter(): int
-{
-    return 60; // Wait 60 seconds before retry
-}
-```
-
-### Exponential Backoff
-
-Increase delay between retries:
-
-```php
-public function backoff(): array
-{
-    return [10, 30, 60]; // 10s, then 30s, then 60s
-}
-```
-
-## Performance Optimization
-
-### Batch Processing
-
-Process multiple events at once:
-
-```php
-use Illuminate\Support\Collection;
-
-class BatchPostSignal extends Signal
-{
-    public function shouldQueue(): bool
-{
-        return true;
-    }
-
-    public function handle(SignalEvent $event): void
-    {
-        // Collect events in cache
-        $events = Cache::get('pending_posts', []);
-        $events[] = $event->toArray();
-
-        Cache::put('pending_posts', $events, now()->addMinutes(5));
-
-        // Process in batches of 100
-        if (count($events) >= 100) {
-            $this->processBatch($events);
-            Cache::forget('pending_posts');
-        }
-    }
-
-    private function processBatch(array $events): void
-    {
-        // Bulk insert, API calls, etc.
-    }
-}
-```
-
-### Conditional Queuing
-
-Queue only expensive operations:
-
-```php
-public function shouldQueue(): bool
-{
-    // Queue during high traffic
-    return now()->hour >= 9 && now()->hour <= 17;
-}
-```
-
-Or based on event type:
-
-```php
-public function handle(SignalEvent $event): void
-{
-    if ($this->isExpensive($event)) {
-        dispatch(function () use ($event) {
-            $this->handleExpensive($event);
-        })->onQueue('slow-operations');
-    } else {
-        $this->handleQuick($event);
-    }
-}
-```
-
-### Rate Limiting
-
-Prevent overwhelming external APIs:
-
-```php
-use Illuminate\Support\Facades\RateLimiter;
-
-public function handle(SignalEvent $event): void
-{
-    RateLimiter::attempt(
-        'api-calls',
-        $perMinute = 100,
-        function () use ($event) {
-            $this->callExternalAPI($event);
-        }
-    );
-}
-```
-
-## Common Patterns
-
-### High-Volume Signal
-
-Process millions of events efficiently:
-
-```php
-class HighVolumeSignal extends Signal
-{
-    public function eventTypes(): array
-    {
-        return ['commit'];
-    }
-
-    public function collections(): ?array
-    {
-        return ['app.bsky.feed.post'];
-    }
-
-    public function shouldQueue(): bool
-    {
-        return true;
-    }
-
-    public function queue(): string
-    {
-        return 'high-volume';
-    }
-
-    public function handle(SignalEvent $event): void
-    {
-        // Lightweight processing only
-        $this->incrementCounter($event);
-    }
-}
-```
-
-Run many workers:
+`ProcessSignalJob` sets no `$tries`, `$backoff` or `$timeout` of its own, and it does not read retry or timeout methods from your Signal. Control them with worker options:
 
 ```bash
-# 10 workers on high-volume queue
-php artisan queue:work --queue=high-volume --workers=10
+php artisan queue:work --queue=signal --tries=3 --backoff=10 --timeout=300
 ```
 
-### Priority Queues
+## Obelisk Mode
 
-Different priorities for different events:
-
-```php
-class PrioritySignal extends Signal
-{
-    public function shouldQueue(): bool
-    {
-        return true;
-    }
-
-    public function queue(): string
-    {
-        // Determine priority based on event
-        return $this->getQueueForEvent();
-    }
-
-    private function getQueueForEvent(): string
-    {
-        // Check event attributes
-        // Return 'high', 'medium', or 'low'
-    }
-}
-```
-
-Process high-priority first:
+In [Obelisk mode](../sources/obelisk.md), webhook deliveries are queued as whole batches (`ProcessObeliskBatchJob`, on the `obelisk` queue by default, see `atp-signals.obelisk.queue_*`). The batch job runs the events through the same dispatcher, so a Signal with `shouldQueue()` returning `true` gets a second job per event on its own queue. Run workers for both queues:
 
 ```bash
-php artisan queue:work --queue=high,medium,low
+php artisan queue:work --queue=obelisk,signal
 ```
-
-### Delayed Processing
-
-Delay event processing:
-
-```php
-public function handle(SignalEvent $event): void
-{
-    // Dispatch with delay
-    dispatch(function () use ($event) {
-        $this->processLater($event);
-    })->delay(now()->addMinutes(5));
-}
-```
-
-### Scheduled Batch Processing
-
-Collect events and process on schedule:
-
-```php
-// Signal collects events
-class CollectorSignal extends Signal
-{
-    public function handle(SignalEvent $event): void
-    {
-        PendingEvent::create([
-            'data' => $event->toArray(),
-        ]);
-    }
-}
-
-// Scheduled command processes batch
-// app/Console/Kernel.php
-protected function schedule(Schedule $schedule)
-{
-    $schedule->call(function () {
-        $events = PendingEvent::all();
-        $this->processBatch($events);
-        PendingEvent::truncate();
-    })->hourly();
-}
-```
-
-## Monitoring Queues
-
-### Check Queue Status
-
-```bash
-# View failed jobs
-php artisan queue:failed
-
-# Retry failed job
-php artisan queue:retry {id}
-
-# Retry all failed
-php artisan queue:retry all
-
-# Clear failed jobs
-php artisan queue:flush
-```
-
-### Queue Metrics
-
-Track queue performance:
-
-```php
-use Illuminate\Support\Facades\Queue;
-
-Queue::after(function ($connection, $job, $data) {
-    Log::info('Job processed', [
-        'queue' => $job->queue,
-        'class' => $job->resolveName(),
-        'attempts' => $job->attempts(),
-    ]);
-});
-```
-
-### Horizon (Recommended)
-
-Use Laravel Horizon for Redis queues:
-
-```bash
-composer require laravel/horizon
-php artisan horizon:install
-php artisan horizon
-```
-
-View dashboard at `/horizon`.
 
 ## Testing Queued Signals
 
-### Test with Fake Queue
+Fake the queue and send an event through the dispatcher:
 
 ```php
 use Illuminate\Support\Facades\Queue;
+use SocialDept\AtpSignals\Events\CommitEvent;
+use SocialDept\AtpSignals\Events\SignalEvent;
+use SocialDept\AtpSignals\Jobs\ProcessSignalJob;
+use SocialDept\AtpSignals\Services\EventDispatcher;
 
-/** @test */
-public function it_queues_events()
+public function test_it_queues_post_events(): void
 {
     Queue::fake();
 
-    $signal = new MySignal();
-    $event = $this->createSampleEvent();
+    app(EventDispatcher::class)->dispatch(new SignalEvent(
+        did: 'did:plc:test123',
+        timeUs: time() * 1000000,
+        kind: 'commit',
+        commit: new CommitEvent(
+            rev: 'test',
+            operation: 'create',
+            collection: 'app.bsky.feed.post',
+            rkey: 'test123',
+            record: (object) ['text' => 'Hello'],
+        ),
+    ));
 
-    // Assert queue behavior
-    $this->assertTrue($signal->shouldQueue());
-
-    // Process would normally queue
-    $signal->handle($event);
-
-    // Verify job was queued
-    Queue::assertPushed(SignalJob::class);
+    Queue::assertPushedOn('signal', ProcessSignalJob::class);
 }
 ```
 
-### Test Synchronously
-
-Disable queueing for tests:
-
-```php
-/** @test */
-public function it_processes_events()
-{
-    config(['queue.default' => 'sync']);
-
-    $signal = new MySignal();
-    $event = $this->createSampleEvent();
-
-    $signal->handle($event);
-
-    // Assert processing happened
-    $this->assertDatabaseHas('posts', [...]);
-}
-```
-
-[Learn more about testing →](testing.md)
-
-## Production Checklist
-
-### Infrastructure
-
-- [ ] Queue driver configured (Redis recommended)
-- [ ] Supervisor installed and configured
-- [ ] Multiple workers running
-- [ ] Worker auto-restart enabled
-- [ ] Logs configured and monitored
-
-### Configuration
-
-- [ ] Queue connection set correctly
-- [ ] Queue names configured
-- [ ] Retry attempts configured
-- [ ] Timeout values appropriate
-- [ ] Memory limits set
-
-### Monitoring
-
-- [ ] Queue length monitored
-- [ ] Failed jobs tracked
-- [ ] Worker health checked
-- [ ] Processing times measured
-- [ ] Horizon installed (if using Redis)
-
-### Scaling
-
-- [ ] Worker count appropriate for volume
-- [ ] Priority queues configured
-- [ ] Rate limiting implemented
-- [ ] Database connection pooling enabled
-- [ ] Redis maxmemory policy set
+The dispatcher runs every registered Signal that matches the event, including auto-discovered ones. See [testing](testing.md) for more.
 
 ## Common Issues
 
-### Queue Jobs Not Processing
+### Queued Jobs Not Processing
 
-**Check worker is running:**
+- Check that a worker is running on the Signal's queue. The default is `signal`, not `default`.
+- If `SIGNAL_QUEUE_CONNECTION` is empty, jobs go to your app's default connection (`config('queue.default')`). With the `sync` connection they run inline in the consumer.
+
+### Memory Growth in Workers
+
+Restart workers periodically:
+
 ```bash
-php artisan queue:work
-```
-
-**Check queue connection:**
-```php
-// Should match QUEUE_CONNECTION
-config('queue.default')
-```
-
-### Jobs Timing Out
-
-**Increase timeout:**
-```bash
-php artisan queue:work --timeout=300
-```
-
-**Or in Signal:**
-```php
-public function timeout(): int
-{
-    return 300; // 5 minutes
-}
-```
-
-### Memory Leaks
-
-**Restart workers periodically:**
-```bash
-php artisan queue:work --max-jobs=1000
-```
-
-Or:
-```bash
-php artisan queue:work --max-time=3600
-```
-
-### Failed Jobs Piling Up
-
-**Review failures:**
-```bash
-php artisan queue:failed
-```
-
-**Retry or delete:**
-```bash
-php artisan queue:retry all
+php artisan queue:work --queue=signal --max-jobs=1000
 # or
-php artisan queue:flush
+php artisan queue:work --queue=signal --max-time=3600
 ```
 
 ## Next Steps
 
-- **[Review configuration options →](configuration.md)** - Fine-tune queue settings
-- **[Learn about testing →](testing.md)** - Test queued Signals
-- **[See real-world examples →](examples.md)** - Learn from production queue patterns
+- **[Review configuration options](../getting-started/configuration.md)**: queue settings and the rest of the config file
+- **[Learn about testing](testing.md)**: test Signals and queued Signals
+- **[See examples](../examples.md)**: complete Signals
