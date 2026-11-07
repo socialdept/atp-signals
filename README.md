@@ -14,23 +14,9 @@
 
 ---
 
-## What is Signal?
+This package lets a Laravel application react to AT Protocol events as they happen. A Signal is a class that names the events it wants, by event type, collection, operation or DID, and handles each one, in the consumer process or on a queue. Events come from Jetstream, the firehose or an Obelisk archive, and the cursor is saved so a restarted consumer resumes where it stopped. For code that keeps its own cursor, Jetstream v2 and labeler streams deliver events and labels in batches. To learn all about it, head over to [the documentation](https://socialde.pt/docs/atp-signals).
 
-**Signal** is a Laravel package that lets you respond to real-time events from the AT Protocol network. Build reactive applications, custom feeds, moderation tools, analytics systems, and AppViews by listening to posts, likes, follows, and other social interactions as they happen across Bluesky and the entire AT Protocol ecosystem.
-
-Think of it as Laravel's event listeners, but for the decentralized social web.
-
-## Why use Signal?
-
-- **Laravel-style code** - Familiar patterns you already know
-- **Real-time processing** - React to events as they happen
-- **Three consumption modes** - Jetstream (efficient JSON), Firehose (comprehensive CBOR), or Obelisk (replayable archive delivery)
-- **AppView ready** - Full support for custom collections and protocols
-- **Production features** - Queue integration, cursor management, auto-reconnection
-- **Easy filtering** - Target specific collections, operations, and users with wildcards
-- **Built-in testing** - Test your signals with sample data
-
-## Quick Example
+Here are a few short examples of what you can do. Write a Signal that handles every new post:
 
 ```php
 use SocialDept\AtpSignals\Events\SignalEvent;
@@ -50,154 +36,31 @@ class NewPostSignal extends Signal
 
     public function handle(SignalEvent $event): void
     {
-        $record = $event->getRecord();
-
-        logger()->info('New post created', [
+        logger()->info('New post', [
             'did' => $event->did,
-            'text' => $record->text ?? null,
+            'text' => $event->getRecord()->text ?? null,
         ]);
     }
 }
 ```
 
-Run `php artisan signal:consume` and start responding to every post on Bluesky in real-time.
-
-## Installation
-
-```bash
-composer require socialdept/atp-signals
-php artisan signal:install
-```
-
-That's it. [Read the installation docs →](docs/installation.md)
-
-## Getting Started
-
-Once installed, you're three steps away from consuming AT Protocol events:
-
-### 1. Create a Signal
-
-```bash
-php artisan make:signal NewPostSignal
-```
-
-### 2. Define What to Listen For
+Match several collections with a wildcard, and only the operations you care about:
 
 ```php
+use SocialDept\AtpSignals\Enums\SignalCommitOperation;
+
 public function collections(): ?array
 {
-    return ['app.bsky.feed.post'];
+    return ['app.bsky.feed.*', 'app.bsky.graph.*'];
 }
-```
 
-### 3. Start Consuming
-
-```bash
-php artisan signal:consume
-```
-
-Your Signal will now handle every matching event from the network. [Read the quickstart guide →](docs/quickstart.md)
-
-## What can you build?
-
-- **Custom feeds** - Curate content based on your own algorithms
-- **Moderation tools** - Detect and flag problematic content automatically
-- **Analytics platforms** - Track engagement, trends, and network growth
-- **Social integrations** - Mirror content to other platforms in real-time
-- **Notification systems** - Alert users about relevant activity
-- **AppViews** - Build custom AT Protocol applications with your own collections
-
-## Documentation
-
-**Getting Started**
-- [Installation](docs/installation.md) - Detailed setup instructions
-- [Quickstart Guide](docs/quickstart.md) - Build your first Signal
-- [Jetstream vs Firehose](docs/modes.md) - Choose the right mode
-
-**Building Signals**
-- [Creating Signals](docs/signals.md) - Complete Signal reference
-- [Filtering Events](docs/filtering.md) - Target specific collections and operations
-- [Queue Integration](docs/queues.md) - Process events asynchronously
-
-**Obelisk Mode**
-- [Obelisk Mode](docs/obelisk.md) - Archive-backed delivery, push or pull, with replay
-
-**Streams**
-- [Streams](docs/streams.md) - Jetstream v2 and labeler streams in batches, for code that keeps its own cursor
-
-**Advanced**
-- [Configuration](docs/configuration.md) - All config options explained
-- [Testing](docs/testing.md) - Test your Signals
-- [Examples](docs/examples.md) - Real-world use cases
-
-## Example Use Cases
-
-### Track User Growth
-```php
-public function collections(): ?array
+public function operations(): ?array
 {
-    return ['app.bsky.graph.follow'];
+    return [SignalCommitOperation::Create];
 }
 ```
 
-### Monitor Content Moderation
-```php
-public function collections(): ?array
-{
-    return ['app.bsky.feed.*'];
-}
-
-public function shouldQueue(): bool
-{
-    return true; // Process in background
-}
-```
-
-### Build Custom Collections (AppView)
-```php
-public function collections(): ?array
-{
-    return ['app.yourapp.custom.collection'];
-}
-```
-
-[See more examples →](docs/examples.md)
-
-## Key Features Explained
-
-### Consumption Modes
-
-Signal supports three modes for consuming AT Protocol events:
-
-- **Jetstream** (default) - Simplified JSON events with server-side filtering. Speaks
-  either wire version: v1 (`time_us` cursors), or v2 (`SIGNAL_JETSTREAM_VERSION=2`)
-  with seq cursors, a server-side kinds filter, repo-divergence `sync` events, and
-  `CursorOutdated` advisories surfaced as a Laravel event
-- **Firehose** - Raw CBOR/CAR format with client-side filtering
-- **Obelisk** - Replayable delivery from a self-hosted record archive, by webhook or by polling
-
-[Learn more about modes →](docs/modes.md) | [Learn more about Obelisk →](docs/obelisk.md)
-
-### Wildcard Filtering
-
-Match multiple collections with patterns:
-
-```php
-public function collections(): ?array
-{
-    return [
-        'app.bsky.feed.*',      // All feed events
-        'app.bsky.graph.*',     // All graph events
-        'app.yourapp.*',        // All your custom collections
-    ];
-}
-```
-
-[Learn more about filtering →](docs/filtering.md)
-
-### Queue Integration
-
-Process events asynchronously for better performance:
+Handle events on a queue instead of in the consumer:
 
 ```php
 public function shouldQueue(): bool
@@ -206,61 +69,28 @@ public function shouldQueue(): bool
 }
 ```
 
-[Learn more about queues →](docs/queues.md)
-
-## Available Commands
+Then start consuming:
 
 ```bash
-# Install Signal
-php artisan signal:install
-
-# Create a new Signal
-php artisan make:signal YourSignal
-
-# List all registered Signals
-php artisan signal:list
-
-# Start consuming events (Jetstream/Firehose/Obelisk)
 php artisan signal:consume
-
-# Test a Signal with sample data
-php artisan signal:test YourSignal
-
-# Obelisk management
-php artisan signal:obelisk:subscribe --execute   # Create/update this app's webhook subscription
-php artisan signal:obelisk:status                # Archive health, subscriptions, cursors
-php artisan signal:obelisk:rewind {cursor} --name=my-app --execute  # Replay from a cursor
-php artisan signal:obelisk:pull                  # Drain new events once and exit
 ```
 
-## Requirements
+## Documentation
 
-- PHP 8.2+
-- Laravel 11+
-- WebSocket support (enabled by default)
+You'll find the documentation on [https://socialde.pt/docs/atp-signals](https://socialde.pt/docs/atp-signals).
 
-## Resources
+Find yourself stuck using the package? Found a bug? Do you have general questions or suggestions for improving it? Feel free to [create an issue on GitHub](https://github.com/socialdept/atp-signals/issues).
 
-- [AT Protocol Documentation](https://atproto.com/)
-- [Bluesky API Docs](https://docs.bsky.app/)
-- [Firehose Documentation](https://docs.bsky.app/docs/advanced-guides/firehose)
-- [Jetstream Documentation](https://github.com/bluesky-social/jetstream)
+## Testing
 
-## Support & Contributing
+```bash
+vendor/bin/phpunit
+```
 
-Found a bug or have a feature request? [Open an issue](https://github.com/socialdept/atp-signals/issues).
+## Contributing
 
-Want to contribute? We'd love your help! Check out the [contribution guidelines](CONTRIBUTING.md).
-
-## Credits
-
-- [Miguel Batres](https://batres.co) - founder & lead maintainer
-- [All contributors](https://github.com/socialdept/atp-signals/graphs/contributors)
+Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
 ## License
 
-Signal is open-source software licensed under the [MIT license](LICENSE).
-
----
-
-**Built for the Atmosphere** • By Social Dept.
+The MIT License (MIT). Please see [LICENSE](LICENSE) for more information.

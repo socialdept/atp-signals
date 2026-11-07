@@ -19,10 +19,10 @@ When requesting or submitting new features, first consider whether it might be u
 ### Before Filing an Issue
 
 - Search existing issues to avoid duplicates
-- Check the [documentation](README.md) to ensure it's not a usage question
+- Check the [documentation](docs/introduction.md) to ensure it's not a usage question
 - Provide a clear title and description
 - Include steps to reproduce the issue
-- Specify your environment (PHP version, Laravel version, Schema version)
+- Specify your environment (PHP version, Laravel version, package version)
 - Include relevant code samples and full error messages
 
 ### Before Submitting a Pull Request
@@ -45,6 +45,18 @@ When requesting or submitting new features, first consider whether it might be u
 - **One pull request per feature** - If you want to do more than one thing, send multiple pull requests.
 - **Send coherent history** - Make sure each individual commit in your pull request is meaningful. If you had to make multiple intermediate commits while developing, please [squash them](https://www.git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Changing-Multiple-Commit-Messages) before submitting.
 
+## How Changes Land
+
+`main` is protected. Every change arrives by pull request, and direct pushes are
+blocked.
+
+- **Merges are squash-only, and the PR title becomes the permanent commit
+  message on `main`.** Write it as one descriptive line. Individual commit
+  messages are preserved in the body.
+- **Two checks must pass:** `Tests (PHP 8.4 - Laravel 13)` and `php-cs-fixer`.
+  Your branch must also be up to date with `main` before merging.
+- No approval is required, but review threads must be resolved.
+
 ## Running Tests
 
 ```bash
@@ -53,7 +65,7 @@ vendor/bin/phpunit
 
 ## Code Style
 
-Schema follows PSR-12 coding standard. Run PHP CS Fixer before submitting:
+This package follows the PSR-12 coding standard. Run PHP CS Fixer before submitting:
 
 ```bash
 vendor/bin/php-cs-fixer fix

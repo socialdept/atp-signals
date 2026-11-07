@@ -1,31 +1,24 @@
 # Filtering Events
 
-Filtering is how you control which events your Signals process. Signal provides multiple layers of filtering to help you target exactly the events you care about.
+Part of the [atp-signals docs](../introduction.md#documentation). Choosing which events a Signal handles, by event type, collection, operation, DID or custom logic.
 
 ## Why Filter?
 
-The AT Protocol generates millions of events per hour. Without filtering:
-
-- Your Signals would process every event (slow and expensive)
-- Your database would fill with irrelevant data
-- Your queues would be overwhelmed
-- Your costs would skyrocket
-
-Filtering lets you focus on what matters.
+The network produces a constant stream of events, and most of them are irrelevant to any one app. Filtering keeps your Signals, database and queues limited to the events you care about. In Jetstream mode, collection filters also reduce what the server sends you.
 
 ## Filter Layers
 
-Signal provides four filtering layers, applied in order:
+For every event, each Signal's filters are checked in this order. The first one that fails skips the Signal.
 
-1. **Event Type Filtering** - Which kind of events (commit, identity, account, sync)
-2. **Collection Filtering** - Which AT Protocol collections
-3. **Operation Filtering** - Which operations (create, update, delete)
-4. **DID Filtering** - Which users
-5. **Custom Filtering** - Your own logic
+1. **Event type**: which kind of event (commit, identity, account, sync)
+2. **Collection**: which AT Protocol collections (commit events only)
+3. **Operation**: which operations, create, update or delete (commit events only)
+4. **DID**: which users (all event types)
+5. **Custom**: your own logic in `shouldHandle()`
 
 ## Event Type Filtering
 
-The most basic filter - required for all Signals.
+The only required filter.
 
 ### Available Event Types
 
@@ -34,18 +27,18 @@ use SocialDept\AtpSignals\Enums\SignalEventType;
 
 public function eventTypes(): array
 {
-    return [SignalEventType::Commit]; // Most common
+    return [SignalEventType::Commit];
     // Or: return ['commit'];
 }
 ```
 
 **Four event types:**
 
-| Type       | Description        | Use Cases                              |
-|------------|--------------------|----------------------------------------|
-| `commit`   | Repository changes | Posts, likes, follows, profile updates |
-| `identity` | Handle changes     | Username updates, account migrations   |
-| `account`  | Account status     | Deactivation, suspension               |
+| Type       | Description                         | Use Cases                                  |
+|------------|-------------------------------------|--------------------------------------------|
+| `commit`   | Repository changes                  | Posts, likes, follows, profile updates     |
+| `identity` | Identity changes                    | Handle updates                             |
+| `account`  | Account status                      | Deactivation, suspension                   |
 | `sync`     | Repo divergence (Jetstream v2 only) | Re-fetch an account's records from its PDS |
 
 ### Multiple Event Types
@@ -79,7 +72,7 @@ public function handle(SignalEvent $event): void
 
 ## Collection Filtering
 
-Collections represent different types of data in the AT Protocol.
+Collections represent different types of data in the AT Protocol. The collection filter only applies to commit events. Identity, account and sync events pass it regardless.
 
 ### Basic Collection Filter
 
@@ -131,15 +124,17 @@ public function collections(): ?array
 - `app.bsky.feed.repost`
 - Any other `app.bsky.feed.*` collection
 
+A `*` matches any run of characters, including dots, so `app.bsky.*` also matches `app.bsky.feed.post`. Matching is case-sensitive and covers the whole collection name. Patterns without `*` must match exactly.
+
 ### Common Collection Patterns
 
-| Pattern            | Matches                 | Use Case               |
-|--------------------|-------------------------|------------------------|
-| `app.bsky.feed.*`  | All feed interactions   | Posts, likes, reposts  |
-| `app.bsky.graph.*` | All social graph        | Follows, blocks, mutes |
-| `app.bsky.actor.*` | All profile changes     | Profile updates        |
-| `app.bsky.*`       | All Bluesky collections | Everything Bluesky     |
-| `app.yourapp.*`    | Your custom collections | Custom AppView         |
+| Pattern              | Matches                 | Use Case               |
+|----------------------|-------------------------|------------------------|
+| `app.bsky.feed.*`    | All feed records        | Posts, likes, reposts  |
+| `app.bsky.graph.*`   | All social graph        | Follows, blocks, lists |
+| `app.bsky.actor.*`   | Actor records           | Profile updates        |
+| `app.bsky.*`         | All Bluesky collections | Everything Bluesky     |
+| `com.example.*`      | Your custom collections | Custom AppView         |
 
 ### Mixing Exact and Wildcards
 
@@ -150,8 +145,8 @@ public function collections(): ?array
 {
     return [
         'app.bsky.feed.post',        // Exact: only posts
-        'app.bsky.graph.*',          // Wildcard: all graph events
-        'app.myapp.custom.record',   // Exact: custom collection
+        'app.bsky.graph.*',          // Wildcard: all graph records
+        'com.example.custom.record', // Exact: custom collection
     ];
 }
 ```
@@ -159,36 +154,39 @@ public function collections(): ?array
 ### Standard Bluesky Collections
 
 **Feed Collections** (`app.bsky.feed.*`):
-- `app.bsky.feed.post` - Posts (text, images, videos)
-- `app.bsky.feed.like` - Likes on posts
-- `app.bsky.feed.repost` - Reposts (shares)
-- `app.bsky.feed.threadgate` - Thread reply controls
-- `app.bsky.feed.generator` - Custom feed generators
+- `app.bsky.feed.post`: posts
+- `app.bsky.feed.like`: likes on posts
+- `app.bsky.feed.repost`: reposts
+- `app.bsky.feed.threadgate`: thread reply controls
+- `app.bsky.feed.generator`: custom feed generators
 
 **Graph Collections** (`app.bsky.graph.*`):
-- `app.bsky.graph.follow` - Follow relationships
-- `app.bsky.graph.block` - Blocked users
-- `app.bsky.graph.list` - User lists
-- `app.bsky.graph.listitem` - List memberships
-- `app.bsky.graph.listblock` - List blocks
+- `app.bsky.graph.follow`: follow relationships
+- `app.bsky.graph.block`: blocked users
+- `app.bsky.graph.list`: user lists
+- `app.bsky.graph.listitem`: list memberships
+- `app.bsky.graph.listblock`: list blocks
 
 **Actor Collections** (`app.bsky.actor.*`):
-- `app.bsky.actor.profile` - User profiles
+- `app.bsky.actor.profile`: user profiles
 
 **Labeler Collections** (`app.bsky.labeler.*`):
-- `app.bsky.labeler.service` - Labeler services
+- `app.bsky.labeler.service`: labeler services
 
-### Important: Jetstream vs Firehose Filtering
+### Jetstream vs Firehose Filtering
 
-**Jetstream Mode:**
-- Exact collection names are sent to server for filtering (efficient)
-- Wildcards work client-side only (you receive more data)
+**Jetstream mode:**
+- The consumer collects the patterns from every registered Signal and sends them to the server as collection filters, wildcards included, so the server only sends matching commits.
+- If any Signal returns `null` from `collections()`, no collection filter is sent and you receive every commit.
+- Jetstream accepts prefix wildcards that end in `.*`. Keep patterns to that form in Jetstream mode.
+- In Jetstream v2, the consumer also sends the event types your Signals listen for, so the server skips the other kinds.
 
-**Firehose Mode:**
-- All filtering is client-side
-- Wildcards work normally (no difference in data received)
+**Firehose mode:**
+- Nothing is filtered on the server. Every event is received and decoded, and all filtering happens in your app.
 
-[Learn more about modes →](modes.md)
+In every mode, the package applies each Signal's filters again in your app before running it, so a Signal only sees events that match its own filters.
+
+[Learn more about modes](../sources/modes.md)
 
 ### Custom Collections (AppViews)
 
@@ -198,15 +196,15 @@ Filter your own custom collections:
 public function collections(): ?array
 {
     return [
-        'app.offprint.beta.publication',
-        'app.offprint.beta.post',
+        'com.example.publication',
+        'com.example.post',
     ];
 }
 ```
 
 ## Operation Filtering
 
-Filter by operation type (only applies to commit events).
+Filter by operation type. This only applies to commit events.
 
 ### Available Operations
 
@@ -268,7 +266,7 @@ public function operations(): ?array
 }
 ```
 
-**Cleanup on deletions:**
+**Clean up on deletions:**
 ```php
 public function operations(): ?array
 {
@@ -278,7 +276,7 @@ public function operations(): ?array
 
 ### Checking Operations in Handler
 
-You can also check operation type in your handler:
+You can also check the operation in your handler:
 
 ```php
 public function handle(SignalEvent $event): void
@@ -290,7 +288,7 @@ public function handle(SignalEvent $event): void
         $this->createRecord($event);
     }
 
-    // Using commit helper
+    // Using commit helpers
     if ($event->commit->isCreate()) {
         $this->createRecord($event);
     }
@@ -307,7 +305,7 @@ public function handle(SignalEvent $event): void
 
 ## DID Filtering
 
-Filter events by specific users (DIDs).
+Filter events by specific users (DIDs). Unlike the collection and operation filters, the DID filter applies to every event type. It is always checked in your app and never sent to the server.
 
 ### Basic DID Filter
 
@@ -345,7 +343,7 @@ public function dids(): ?array
 
 **Monitor specific accounts:**
 ```php
-// Track posts from specific content creators
+// Track posts from specific accounts
 public function collections(): ?array
 {
     return ['app.bsky.feed.post'];
@@ -354,32 +352,36 @@ public function collections(): ?array
 public function dids(): ?array
 {
     return [
-        'did:plc:z72i7hdynmk6r22z27h6tvur', // Creator 1
-        'did:plc:ragtjsm2j2vknwkz3zp4oxrd', // Creator 2
+        'did:plc:z72i7hdynmk6r22z27h6tvur', // Account 1
+        'did:plc:ragtjsm2j2vknwkz3zp4oxrd', // Account 2
     ];
 }
 ```
 
 **Dynamic DID filtering:**
+
+`dids()` is called for every event that reaches the DID check, so cache a list that comes from the database:
+
 ```php
 use App\Models\MonitoredAccount;
+use Illuminate\Support\Facades\Cache;
 
 public function dids(): ?array
 {
-    return MonitoredAccount::pluck('did')->toArray();
+    return Cache::remember('monitored-dids', 60, fn () => MonitoredAccount::pluck('did')->all());
 }
 ```
 
 ## Custom Filtering
 
-Implement complex filtering logic with `shouldHandle()`.
+Implement any other filtering logic in `shouldHandle()`. It runs after all the other filters pass.
 
 ### Basic Custom Filter
 
 ```php
 public function shouldHandle(SignalEvent $event): bool
 {
-    // Only handle posts with images
+    // Only handle posts with an embed
     if ($event->isCommit() && $event->getCollection() === 'app.bsky.feed.post') {
         $record = $event->getRecord();
         return isset($record->embed);
@@ -389,7 +391,7 @@ public function shouldHandle(SignalEvent $event): bool
 }
 ```
 
-### Advanced Examples
+### More Examples
 
 **Filter by text content:**
 ```php
@@ -397,7 +399,7 @@ public function shouldHandle(SignalEvent $event): bool
 {
     $record = $event->getRecord();
 
-    if (!isset($record->text)) {
+    if (! isset($record->text)) {
         return false;
     }
 
@@ -412,41 +414,21 @@ public function shouldHandle(SignalEvent $event): bool
 {
     $record = $event->getRecord();
 
-    // Only handle English posts
+    // Only handle posts whose first language is English
     return ($record->langs[0] ?? null) === 'en';
-}
-```
-
-**Filter by engagement:**
-```php
-use App\Services\EngagementCalculator;
-
-public function shouldHandle(SignalEvent $event): bool
-{
-    $engagement = EngagementCalculator::calculate($event);
-
-    // Only handle high-engagement content
-    return $engagement > 100;
-}
-```
-
-**Time-based filtering:**
-```php
-public function shouldHandle(SignalEvent $event): bool
-{
-    $timestamp = $event->getTimestamp();
-
-    // Only handle events from the last hour
-    return $timestamp->isAfter(now()->subHour());
 }
 ```
 
 ## Combining Filters
 
-Stack multiple filter layers for precise targeting:
+Stack filter layers for precise targeting:
 
 ```php
-class HighEngagementPostsSignal extends Signal
+use SocialDept\AtpSignals\Enums\SignalCommitOperation;
+use SocialDept\AtpSignals\Events\SignalEvent;
+use SocialDept\AtpSignals\Signals\Signal;
+
+class LongMediaPostsSignal extends Signal
 {
     // Layer 1: Event type
     public function eventTypes(): array
@@ -466,23 +448,23 @@ class HighEngagementPostsSignal extends Signal
         return [SignalCommitOperation::Create];
     }
 
-    // Layer 4: Custom logic
+    // Layer 5: Custom logic
     public function shouldHandle(SignalEvent $event): bool
     {
         $record = $event->getRecord();
 
         // Must have text
-        if (!isset($record->text)) {
+        if (! isset($record->text)) {
             return false;
         }
 
-        // Must be longer than 100 characters
+        // Must be at least 100 characters
         if (strlen($record->text) < 100) {
             return false;
         }
 
         // Must have media
-        if (!isset($record->embed)) {
+        if (! isset($record->embed)) {
             return false;
         }
 
@@ -491,90 +473,77 @@ class HighEngagementPostsSignal extends Signal
 
     public function handle(SignalEvent $event): void
     {
-        // Only high-quality posts make it here
+        // Only long posts with media make it here
     }
 }
 ```
 
 ## Performance Considerations
 
-### Server-Side vs Client-Side Filtering
+### Prefer Declarative Filters
 
-**Jetstream Mode (Server-Side):**
-- Collections filter applied on server (efficient)
-- Only receives matching events
-- Lower bandwidth usage
+Use `eventTypes()`, `collections()` and `operations()` rather than doing the same checks in `shouldHandle()`. In Jetstream mode the collections are sent to the server, which a check in `shouldHandle()` cannot do.
 
 ```php
-// These collections are sent to Jetstream server
-public function collections(): ?array
-{
-    return ['app.bsky.feed.post', 'app.bsky.feed.like'];
-}
-```
-
-**Firehose Mode (Client-Side):**
-- All filtering happens in your application
-- Receives all events (higher bandwidth)
-- More control but higher cost
-
-[Learn more about modes →](modes.md)
-
-### Filter Early
-
-Apply the most restrictive filters first:
-
-```php
-// Good - filters early
+// Good: declarative filters
 public function eventTypes(): array
 {
-    return ['commit']; // Narrows to commits only
+    return ['commit'];
 }
 
 public function collections(): ?array
 {
-    return ['app.bsky.feed.post']; // Further narrows to posts
+    return ['app.bsky.feed.post'];
 }
 
-// Less ideal - too broad
+// Less ideal: everything in custom logic
 public function eventTypes(): array
 {
-    return ['commit', 'identity', 'account']; // Too many events
+    return ['commit', 'identity', 'account'];
 }
 
 public function shouldHandle(SignalEvent $event): bool
 {
-    // Filtering everything in custom logic (expensive)
     return $event->isCommit() && $event->getCollection() === 'app.bsky.feed.post';
 }
 ```
 
-### Avoid Heavy Logic in shouldHandle()
+The second version also leaves `collections()` as `null`, which turns off the Jetstream server filter for every Signal.
 
-Keep custom filtering lightweight:
+### Keep shouldHandle() Light
+
+All filters, `shouldHandle()` included, run in the consumer process for every event, even when the Signal is queued:
 
 ```php
-// Good - lightweight checks
+// Good: lightweight checks
 public function shouldHandle(SignalEvent $event): bool
 {
     $record = $event->getRecord();
     return isset($record->text) && strlen($record->text) > 10;
 }
 
-// Less ideal - heavy database queries
+// Less ideal: a database query on every event
 public function shouldHandle(SignalEvent $event): bool
 {
-    // Database query on every event (slow!)
     return User::where('did', $event->did)->exists();
 }
 ```
 
-If you need heavy logic, use queues:
+If a check is expensive, queue the Signal and do the check at the start of `handle()`, which then runs on a queue worker:
 
 ```php
 public function shouldQueue(): bool
 {
-    return true; // Move heavy work to queue
+    return true;
+}
+
+public function handle(SignalEvent $event): void
+{
+    if (! User::where('did', $event->did)->exists()) {
+        return;
+    }
+
+    // ...
 }
 ```
 
@@ -668,19 +637,18 @@ public function eventTypes(): array
 
 ## Debugging Filters
 
-### Log What's Being Filtered
+### Log What Is Filtered Out
 
 ```php
 public function shouldHandle(SignalEvent $event): bool
 {
     $shouldHandle = $this->myCustomLogic($event);
 
-    if (!$shouldHandle) {
+    if (! $shouldHandle) {
         Log::debug('Event filtered out', [
             'signal' => static::class,
             'did' => $event->did,
             'collection' => $event->getCollection(),
-            'reason' => 'Failed custom logic',
         ]);
     }
 
@@ -688,18 +656,20 @@ public function shouldHandle(SignalEvent $event): bool
 }
 ```
 
+Set `SIGNAL_DEBUG=true` to log every event the dispatcher sends to a Signal, which shows what passed your filters.
+
 ### Test Your Filters
 
 ```bash
 php artisan signal:test YourSignal
 ```
 
-This runs your Signal with sample data to verify filtering works correctly.
+This builds a sample commit event (a new `app.bsky.feed.post` record), calls your Signal's `shouldHandle()`, and calls `handle()` if it returns `true`. It does not check `eventTypes()`, `collections()`, `operations()` or `dids()`.
 
-[Learn more about testing →](testing.md)
+[Learn more about testing](testing.md)
 
 ## Next Steps
 
-- **[Understand Jetstream vs Firehose →](modes.md)** - Choose the right mode for your filters
-- **[Learn about queue integration →](queues.md)** - Handle high-volume filtered events
-- **[See real-world examples →](examples.md)** - Learn from production filter patterns
+- **[Understand Jetstream vs Firehose](../sources/modes.md)**: choose the right mode for your filters
+- **[Learn about queue integration](queues.md)**: handle high-volume filtered events
+- **[See examples](../examples.md)**: complete Signals for common tasks

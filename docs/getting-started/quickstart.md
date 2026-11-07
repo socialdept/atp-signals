@@ -1,28 +1,26 @@
 # Quickstart Guide
 
-This guide will walk you through building your first Signal and consuming AT Protocol events in under 5 minutes.
+Part of the [atp-signals docs](../introduction.md#documentation). Building a first Signal and consuming events with it.
 
 ## Prerequisites
 
-Before starting, ensure you have:
+Before starting, make sure you have:
 
-- [Installed Signal](installation.md) in your Laravel application
-- Run `php artisan signal:install` successfully
+- [Installed the package](installation.md) in your Laravel application
+- Run `php artisan signal:install`
 - Basic familiarity with Laravel
 
 ## Your First Signal
 
-We'll build a Signal that logs every new post created on Bluesky.
+This Signal logs every new post created on Bluesky.
 
 ### Step 1: Generate a Signal
-
-Use the Artisan command to create a new Signal:
 
 ```bash
 php artisan make:signal NewPostSignal
 ```
 
-This creates `app/Signals/NewPostSignal.php` with a basic template.
+This creates `app/Signals/NewPostSignal.php`. The generated class listens for `commit` events on `app.bsky.feed.post`. Pass `--type` (`-t`) or `--collection` (`-c`) to start from a different event type or collection.
 
 ### Step 2: Define the Signal
 
@@ -73,25 +71,17 @@ class NewPostSignal extends Signal
 
 ### Step 3: Start Consuming Events
 
-Run the consumer to start listening:
-
 ```bash
 php artisan signal:consume
 ```
 
-You should see output like:
+The command lists the Signals it found, each with its event types, collections and operations, then prints the mode, where it resumes from, and `Starting jetstream consumer... Press Ctrl+C to stop.` It keeps running until you stop it.
 
-```
-Starting Signal consumer in jetstream mode...
-Connecting to wss://jetstream2.us-east.bsky.network...
-Connected! Listening for events...
-```
+Connection status goes to your Laravel log rather than the console, for example `[Signal] Connected to Jetstream successfully`. Your Signal's log lines show up there too, one per new post.
 
-**Congratulations!** Your Signal is now processing every new post on Bluesky in real-time. Check your Laravel logs to see the posts coming in.
+If no Signals are registered, the command prints a warning and exits.
 
 ## Understanding What Just Happened
-
-Let's break down the Signal you created:
 
 ### Event Types
 
@@ -102,12 +92,14 @@ public function eventTypes(): array
 }
 ```
 
-This tells Signal you want **commit** events, which represent changes to repositories (like creating posts, likes, follows, etc.).
+This asks for **commit** events, which represent changes to repositories (creating posts, likes, follows, and so on).
 
-Available event types:
-- `commit` - Repository commits (most common)
-- `identity` - Identity changes (handle updates)
-- `account` - Account status changes
+Available event types (also available as the `SocialDept\AtpSignals\Enums\SignalEventType` enum):
+
+- `commit`: repository commits (most common)
+- `identity`: identity changes (handle updates)
+- `account`: account status changes
+- `sync`: repository sync events (Jetstream v2 only)
 
 ### Collections
 
@@ -118,15 +110,16 @@ public function collections(): ?array
 }
 ```
 
-This filters to only **post** collections. Without this filter, your Signal would receive all commit events for every collection type.
+This filters to the **post** collection. Returning `null` (the default) receives commit events for every collection.
 
 Common collections:
-- `app.bsky.feed.post` - Posts
-- `app.bsky.feed.like` - Likes
-- `app.bsky.graph.follow` - Follows
-- `app.bsky.feed.repost` - Reposts
 
-[Learn more about filtering →](filtering.md)
+- `app.bsky.feed.post`: posts
+- `app.bsky.feed.like`: likes
+- `app.bsky.graph.follow`: follows
+- `app.bsky.feed.repost`: reposts
+
+[Learn more about filtering](../signals/filtering.md)
 
 ### Handler Method
 
@@ -138,16 +131,16 @@ public function handle(SignalEvent $event): void
 }
 ```
 
-This is where your code runs for each matching event. The `$event` object contains:
+This runs for each matching event. The `SignalEvent` gives you:
 
-- `did` - The user's DID (decentralized identifier)
-- `timeUs` - Timestamp in microseconds
-- `commit` - Commit details (collection, operation, record key)
-- `getRecord()` - The actual record data
+- `did`: the author's DID (decentralized identifier)
+- `kind`: the event type (`commit`, `identity`, `account` or `sync`)
+- `timeUs`: the event time in microseconds on Jetstream. On the firehose it holds the event's sequence number
+- `commit`: a `CommitEvent` with `rev`, `operation`, `collection`, `rkey`, `record` and `cid`
+- `getRecord()`: the record data, or `null` when there is none (deletes)
+- `getCollection()` and `getOperation()`: shortcuts into `commit`
 
 ## Next Steps
-
-Now that you've built your first Signal, let's make it more useful.
 
 ### Add More Filtering
 
@@ -158,15 +151,15 @@ use SocialDept\AtpSignals\Enums\SignalCommitOperation;
 
 public function operations(): ?array
 {
-    return [SignalCommitOperation::Create]; // Only new posts, not edits
+    return [SignalCommitOperation::Create]; // Only new posts, not updates or deletes
 }
 ```
 
-[Learn more about filtering →](filtering.md)
+[Learn more about filtering](../signals/filtering.md)
 
 ### Process Events Asynchronously
 
-For expensive operations, use Laravel queues:
+For expensive work, queue the Signal:
 
 ```php
 public function shouldQueue(): bool
@@ -176,16 +169,18 @@ public function shouldQueue(): bool
 
 public function handle(SignalEvent $event): void
 {
-    // This now runs in a background job
+    // This now runs in a queued job
     $this->performExpensiveAnalysis($event);
 }
 ```
 
-[Learn more about queues →](queues.md)
+Queued Signals go to the `signal` queue by default, so run a worker for it (`php artisan queue:work --queue=signal`).
+
+[Learn more about queues](../signals/queues.md)
 
 ### Store Data
 
-Let's store posts in your database:
+Store posts in your database:
 
 ```php
 use App\Models\Post;
@@ -201,7 +196,7 @@ public function handle(SignalEvent $event): void
         ],
         [
             'text' => $record->text ?? null,
-            'created_at' => $record->createdAt,
+            'created_at' => $record->createdAt ?? null,
         ]
     );
 }
@@ -215,7 +210,7 @@ Use wildcards to match multiple collections:
 public function collections(): ?array
 {
     return [
-        'app.bsky.feed.*', // All feed events
+        'app.bsky.feed.*', // All feed collections
     ];
 }
 
@@ -234,7 +229,7 @@ public function handle(SignalEvent $event): void
 
 ## Building Something Real
 
-Let's build a simple engagement tracker:
+A simple engagement tracker:
 
 ```php
 <?php
@@ -284,19 +279,19 @@ class EngagementTrackerSignal extends Signal
 }
 ```
 
-This Signal tracks all engagement activity (posts, likes, reposts) and stores metrics for analysis.
+This Signal records a row for every new post, like and repost.
 
 ## Testing Your Signal
 
-Before running in production, test your Signal with sample data:
+Run your Signal against a sample event:
 
 ```bash
 php artisan signal:test NewPostSignal
 ```
 
-This will run your Signal with a sample event and show you the output.
+The command builds a sample `commit` event (a post created by `did:plc:sample123456789`), prints it as JSON, then calls `shouldHandle()` and `handle()` on your Signal directly. It does not apply `eventTypes()`, `collections()`, `operations()` or `dids()`, and it does not queue.
 
-[Learn more about testing →](testing.md)
+[Learn more about testing](../signals/testing.md)
 
 ## Common Patterns
 
@@ -313,17 +308,21 @@ public function dids(): ?array
 
 ### Add Custom Filtering Logic
 
+`shouldHandle()` runs after the other filters:
+
 ```php
 public function shouldHandle(SignalEvent $event): bool
 {
     $record = $event->getRecord();
 
-    // Only handle posts with images
+    // Only handle posts with an embed (images, links, quotes)
     return isset($record->embed);
 }
 ```
 
-### Handle Failures Gracefully
+### Handle Failures
+
+`failed()` is called when `handle()` throws on a synchronous Signal, and when the queued job fails for a queued Signal:
 
 ```php
 public function failed(SignalEvent $event, \Throwable $exception): void
@@ -332,16 +331,16 @@ public function failed(SignalEvent $event, \Throwable $exception): void
         'event' => $event->toArray(),
         'error' => $exception->getMessage(),
     ]);
-
-    // Optionally notify admins, store for retry, etc.
 }
 ```
+
+For a synchronous Signal the error is also logged and the consumer moves on to the next Signal and event.
 
 ## Running in Production
 
 ### Using Supervisor
 
-For production, run Signal under a process monitor like Supervisor:
+Run the consumer under a process monitor like Supervisor:
 
 ```ini
 [program:signal-consumer]
@@ -354,19 +353,23 @@ redirect_stderr=true
 stdout_logfile=/path/to/logs/signal-consumer.log
 ```
 
+The consumer reconnects on its own after a dropped connection and exits with an error once it runs out of attempts, so `autorestart` matters. See [connection settings](configuration.md#connection).
+
 ### Starting from Last Position
 
-Signal automatically saves cursor positions, so it resumes from where it left off:
+The consumer saves its cursor as events arrive, so it resumes from where it left off:
 
 ```bash
 php artisan signal:consume
 ```
 
-To start fresh and ignore stored position:
+To ignore the stored position:
 
 ```bash
 php artisan signal:consume --fresh
 ```
+
+On Jetstream and the firehose this connects without a cursor and starts from live events. In `obelisk` mode it reads the archive's event log from the start. The stored cursor is not deleted, it is overwritten as new events arrive.
 
 To start from a specific cursor:
 
@@ -374,31 +377,22 @@ To start from a specific cursor:
 php artisan signal:consume --cursor=123456789
 ```
 
-### Troubleshooting Missing Events
+The value is a `time_us` timestamp on Jetstream v1, a sequence number on Jetstream v2 and the firehose, and an event id on Obelisk.
 
-If you're not seeing expected events, you may have a stale cursor from a previous session. Use the `--fresh` flag to start from the current position:
+### Catching Up After Downtime
 
-```bash
-php artisan signal:consume --fresh
-```
-
-This is especially useful when:
-- You've added new collection filters to your Signals
-- You're testing with a newly created Signal
-- Events seem to be missing or delayed
+When the consumer has been stopped for a while, it resumes from the stored cursor and replays everything since then before it reaches live events, so new events can look delayed. If you do not need the backlog, start with `--fresh`.
 
 ## What's Next?
 
-You now know the basics of building Signals! Explore more advanced topics:
-
-- **[Signal Architecture](signals.md)** - Deep dive into Signal structure
-- **[Advanced Filtering](filtering.md)** - Master collection patterns and wildcards
-- **[Jetstream vs Firehose](modes.md)** - Choose the right mode for your use case
-- **[Queue Integration](queues.md)** - Build high-performance processors
-- **[Real-World Examples](examples.md)** - Learn from production use cases
+- **[Signal Architecture](../signals/signals.md)**: how a Signal is structured
+- **[Filtering](../signals/filtering.md)**: collection patterns and wildcards
+- **[Jetstream vs Firehose](../sources/modes.md)**: choose a mode for your use case
+- **[Queue Integration](../signals/queues.md)**: run Signals on queues
+- **[Examples](../examples.md)**: complete Signals for common tasks
 
 ## Getting Help
 
-- Check the [examples documentation](examples.md) for more patterns
+- Check the [examples](../examples.md) for more patterns
 - Review the [configuration guide](configuration.md) for all options
-- Open an issue on GitHub if you encounter problems
+- Open an issue on GitHub if you run into problems

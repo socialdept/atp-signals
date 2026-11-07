@@ -1,6 +1,11 @@
 # Obelisk Mode
 
+Part of the [atp-signals docs](../introduction.md#documentation). Archive-backed delivery from an Obelisk archive, by webhook or by polling, with replay.
+
 [Obelisk](https://github.com/socialdept/obelisk) is a self-hostable AT Protocol record archive. It syncs configured collections from the network, keeps a permanent archive of every record it sees, and serves them over an authenticated XRPC API. Signal consumes its event log.
+
+> [!NOTE]
+> The Obelisk repository is archived on GitHub.
 
 ## Why Obelisk
 
@@ -40,7 +45,7 @@ Mint the token on the archive with `bun run scripts/create-token.ts my-app`.
 
 ### 2. Your Signals work unchanged
 
-Obelisk's event log is commit events only — the archive has no identity or account stream. Everything else is the same:
+Obelisk's event log is commit events only. The archive has no identity or account stream. Everything else is the same:
 
 ```php
 class IndexDocumentSignal extends Signal
@@ -112,13 +117,13 @@ Schedule::command('signal:obelisk:pull')->everyMinute()->withoutOverlapping();
 
 ## How delivery stays correct
 
-**Obelisk owns the push cursor.** It advances only on a 2xx response. The webhook endpoint answers 200 only once the batch is durably accepted — queued, or handled inline. Anything else (bad signature, malformed payload, queue failure) returns non-2xx, and Obelisk redelivers the same batch after an exponential backoff. Nothing is silently skipped.
+**Obelisk owns the push cursor.** It advances only on a 2xx response. The webhook endpoint answers 200 only once the batch is durably accepted, either queued or handled inline. Anything else (bad signature, malformed payload, queue failure) returns non-2xx, and Obelisk redelivers the same batch after an exponential backoff. Nothing is silently skipped.
 
-**The batch is the unit of work.** `ProcessObeliskBatchJob` takes the whole delivery, not one job per event, so events keep their cursor order. A batch can contain a create, an update, and a delete for the same URI; dispatching them across parallel workers would let the wrong one land last.
+**The batch is the unit of work.** `ProcessObeliskBatchJob` takes the whole delivery, not one job per event, so events keep their cursor order. A batch can contain a create, an update, and a delete for the same URI, and dispatching them across parallel workers would let the wrong one land last.
 
 Because of that, Signals consumed through Obelisk should leave `shouldQueue()` at `false` and let the batch job be the queue boundary. A Signal that returns `true` gets re-dispatched per event and gives up ordering.
 
-**Delivery is at-least-once.** A redelivered batch replays events you may have already handled, so handlers must be idempotent — upsert on the record URI rather than insert.
+**Delivery is at-least-once.** A redelivered batch replays events you may have already handled, so handlers must be idempotent. Upsert on the record URI rather than insert.
 
 ## Verifying a delivery by hand
 
@@ -132,7 +137,7 @@ Signal does this for you. It fails closed: with no `OBELISK_WEBHOOK_SECRET` set,
 
 ## Event shape
 
-Both planes carry the same event. Push wraps it in `{subscription, cursor, events: []}`; `getEvents` pages it.
+Both planes carry the same event. Push wraps it in `{subscription, cursor, events: []}`, and `getEvents` pages it.
 
 | Field | Maps to | Notes |
 |---|---|---|
@@ -155,7 +160,7 @@ Both planes carry the same event. Push wraps it in `{subscription, cursor, event
 | `signal:obelisk:status` | Archive reachability, subscriptions, cursors, failure counts |
 | `signal:obelisk:rewind {cursor}` | Rewind a subscription (`--id`/`--name`) or the pull cursor (`--pull`) to replay |
 | `signal:obelisk:pull` | Drain new events once and exit |
-| `signal:obelisk:pause` | Stop delivery; the cursor holds, nothing is lost |
+| `signal:obelisk:pause` | Stop delivery. The cursor holds, so nothing is lost |
 | `signal:obelisk:resume` | Restart delivery and clear the backoff (also un-sticks a `failing` subscription) |
 | `signal:consume` | Run the pull consumer continuously (`SIGNAL_MODE=obelisk`) |
 
@@ -163,9 +168,9 @@ Both planes carry the same event. Push wraps it in `{subscription, cursor, event
 
 ## Flow control
 
-Accepting a batch is cheap — a queue push — while handling one is not. Since the archive delivers as fast as you answer, a consumer that acks quickly and processes slowly will let the queue grow without bound. Each job carries a whole batch of record bodies, so memory gives out long before the job count looks alarming.
+Accepting a batch is cheap, since it is a queue push, while handling one is not. Since the archive delivers as fast as you answer, a consumer that acks quickly and processes slowly will let the queue grow without bound. Each job carries a whole batch of record bodies, so memory gives out long before the job count looks alarming.
 
-`OBELISK_MAX_QUEUE_DEPTH` (default 100) is the brake. Once that many jobs are waiting, the webhook answers **503 with `Retry-After`** instead of queueing. The archive advances its cursor only on a 2xx, so it backs off and re-sends the same batch — nothing is lost, you simply stop taking work you cannot keep up with. Set it to 0 to disable, and keep it low: the jobs are fat.
+`OBELISK_MAX_QUEUE_DEPTH` (default 100) is the brake. Once that many jobs are waiting, the webhook answers **503 with `Retry-After`** instead of queueing. The archive advances its cursor only on a 2xx, so it backs off and re-sends the same batch. Nothing is lost, you just stop taking work you cannot keep up with. Set it to 0 to disable, and keep it low: the jobs are fat.
 
 Obelisk treats 429 and 503 as flow control rather than failure, so throttling does **not** count toward the threshold that retires a subscription. A consumer can push back for hours without retiring itself.
 
@@ -175,10 +180,10 @@ The brake only applies when queueing. Handling inline (`OBELISK_QUEUE_EVENTS=fal
 
 Push delivery is the wrong tool for a first import of an archive that already holds hundreds of thousands of records: every batch lands in the queue as fat payloads, and the brake will spend most of its time engaged.
 
-Pull instead — it cannot outrun itself:
+Pull instead, since it cannot outrun itself:
 
 ```bash
-SIGNAL_MODE=obelisk php artisan signal:obelisk:pull
+php artisan signal:obelisk:pull
 ```
 
 One page at a time, processed synchronously, cursor persisted after each. It resumes where it stopped if it dies at record 300,000. When it has caught up, hand the position straight to push delivery:
@@ -232,13 +237,13 @@ Obelisk never writes to a PDS, so there is no write path here. Publishing record
 
 ## Configuration
 
-See [Configuration](configuration.md#obelisk-configuration) for every option.
+See [Configuration](../getting-started/configuration.md#obelisk) for every option.
 
 ## Troubleshooting
 
-**Deliveries return 401.** The secret does not match. `OBELISK_WEBHOOK_SECRET` must be the value `createWebhook` returned; re-create the subscription if it was lost. Check `signal:obelisk:status` for a climbing failure count.
+**Deliveries return 401.** The secret does not match. `OBELISK_WEBHOOK_SECRET` must be the value `createWebhook` returned. Re-create the subscription if it was lost. Check `signal:obelisk:status` for a climbing failure count.
 
-**Nothing arrives.** Confirm the subscription's URL is reachable *from Obelisk* — a container cannot resolve a host-only `.test` domain. Check `signal:obelisk:status`, and confirm the archive has events at all (`getEvents?cursor=0`).
+**Nothing arrives.** Confirm the subscription's URL is reachable *from Obelisk*. A container cannot resolve a host-only `.test` domain. Check `signal:obelisk:status`, and confirm the archive has events at all (`getEvents?cursor=0`).
 
 **Events arrive but no Signal runs.** The subscription's collections and your Signals' `collections()` both filter. Set `SIGNAL_DEBUG=true` to log every event the batch processor sees.
 
